@@ -13,5 +13,17 @@ Others:
 - [] Configurable middlware with json/yaml
 - [] Hotreloading of config file
 
+### Config file template
+```yaml
+"first.localhost:8080":
+  destination: "127.0.0.1:8081"
+  middleware: []
+
+"second.localhost:8080":
+  destination: "127.0.0.1:8082"
+  middleware: []
+```
+
+
 ### LICENSE
 MIT
