@@ -1,9 +1,11 @@
 package config
 
 import (
-	"gopkg.in/yaml.v3"
+	"log"
 	"os"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -19,23 +21,25 @@ type Config struct {
 	Routes map[string]Route
 }
 
-func ReadConfig(configPath string) *Config {
+func ReadConfig(configPath string) (*Config, error) {
 	config := &Config{}
-	go func() {
-		_ = watchConfig(config)
-	}()
+	err := readConfig(config)
+	if err != nil {
+		return nil, err
+	}
 
-	return config
+	return config, nil
 }
 
-func watchConfig(config *Config) error {
+func WatchConfig(config *Config) error {
+    var err error
 	for {
-		err := readConfig(config)
+		err = readConfig(config)
 		if err != nil {
-			return err
+		    log.Printf("Could not read updated Configuration file: %v", err)
 		}
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 }
 func readConfig(config *Config) error {

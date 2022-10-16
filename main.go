@@ -4,21 +4,19 @@ import (
 	"log"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
+	"github.com/gabrielopesantos/reverse-proxy/pkg/server"
 )
 
-func exec(c *config.Config) {
-	log.Println("Hello world")
-}
-
 func main() {
-	cfg := config.ReadConfig(config.DefaultPath)
+	cfg, err := config.ReadConfig(config.DefaultPath)
+    if err != nil {
+        log.Fatalf("Failed to read configuration file: %s", err)
+    }
 
-	for {
-		switch cfg {
-		case nil:
-			log.Printf("Failed to read configuration file. Check if file has read permission or is in the following path: %s", config.DefaultPath)
-		default:
-			exec(cfg)
-		}
-	}
+    // ?
+    go config.WatchConfig(cfg)
+
+    server := server.NewServer(cfg)
+    server.Run()
+
 }
