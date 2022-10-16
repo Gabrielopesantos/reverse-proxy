@@ -2,46 +2,23 @@ package main
 
 import (
 	"log"
-	"os"
 
-	"gopkg.in/yaml.v3"
+	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
 )
 
-const (
-	configFilePath = "config.yaml"
-)
-
-type Route struct {
-	Destination string   `yaml:"destination"`
-	Middleware  []string `yaml:"middleware"`
-}
-
-type Config struct {
-	Routes map[string]Route
-}
-
-func readConfig() (*Config, error) {
-	// check if file exists and is readable
-	configFileContent, err := os.ReadFile(configFilePath)
-	if err != nil {
-		return nil, err
-	}
-
-	configRoutes := make(map[string]Route)
-	err = yaml.Unmarshal(configFileContent, configRoutes)
-	if err != nil {
-		return nil, err
-	}
-	config := &Config{Routes: configRoutes}
-
-	return config, nil
+func exec(c *config.Config) {
+	log.Println("Hello world")
 }
 
 func main() {
-	config, err := readConfig()
-	if err != nil {
-		log.Fatal("failed to read file config")
-	}
+	cfg := config.ReadConfig(config.DefaultPath)
 
-	log.Printf("%+v", config.Routes)
+	for {
+		switch cfg {
+		case nil:
+			log.Printf("Failed to read configuration file. Check if file has read permission or is in the following path: %s", config.DefaultPath)
+		default:
+			exec(cfg)
+		}
+	}
 }
