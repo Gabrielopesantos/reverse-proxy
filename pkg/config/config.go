@@ -32,11 +32,11 @@ func ReadConfig(configPath string) (*Config, error) {
 }
 
 func WatchConfig(config *Config) error {
-    var err error
+	var err error
 	for {
 		err = readConfig(config)
 		if err != nil {
-		    log.Printf("Could not read updated Configuration file: %v", err)
+			log.Printf("Could not read updated Configuration file: %v", err)
 		}
 
 		time.Sleep(5 * time.Second)

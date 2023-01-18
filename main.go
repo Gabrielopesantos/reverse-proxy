@@ -9,14 +9,13 @@ import (
 
 func main() {
 	cfg, err := config.ReadConfig(config.DefaultPath)
-    if err != nil {
-        log.Fatalf("Failed to read configuration file: %s", err)
-    }
+	if err != nil {
+		log.Fatalf("Failed to read configuration file: %s", err)
+	}
 
-    // ?
-    go config.WatchConfig(cfg)
+	// ?
+	go config.WatchConfig(cfg)
 
-    server := server.NewServer(cfg)
-    server.Run()
-
+	server := server.NewServer(cfg)
+	server.Run()
 }

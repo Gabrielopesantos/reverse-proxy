@@ -1,8 +1,8 @@
 package server
 
 import (
+	"log"
 	"time"
-    "log"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
 )
