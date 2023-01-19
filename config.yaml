@@ -1,11 +1,15 @@
-"first.localhost:8080":
+"/first":
   destination: "127.0.0.1:8081"
   middleware: []
 
-"second.localhost:8080":
+"/second":
   destination: "127.0.0.1:8082"
   middleware: []
 
-"third.localhost:8080":
+"/third":
   destination: "127.0.0.1:8083"
+  middleware: []
+
+"/fourth":
+  destination: "127.0.0.1:8084"
   middleware: []

@@ -42,6 +42,7 @@ func WatchConfig(config *Config) error {
 		time.Sleep(5 * time.Second)
 	}
 }
+
 func readConfig(config *Config) error {
 	configFileContent, err := os.ReadFile(DefaultPath)
 	if err != nil {

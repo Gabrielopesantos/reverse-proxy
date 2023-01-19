@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
-	"github.com/gabrielopesantos/reverse-proxy/pkg/server"
+	"github.com/gabrielopesantos/reverse-proxy/pkg/proxy"
 )
 
 func main() {
@@ -13,9 +13,8 @@ func main() {
 		log.Fatalf("Failed to read configuration file: %s", err)
 	}
 
-	// ?
 	go config.WatchConfig(cfg)
 
-	server := server.NewServer(cfg)
-	server.Run()
+	proxy := proxy.NewServer(cfg)
+	proxy.Run()
 }
