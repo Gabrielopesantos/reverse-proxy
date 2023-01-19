@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
+	"github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 )
 
 type Proxy struct {
@@ -37,10 +38,10 @@ func (p *Proxy) Run() {
 func (p *Proxy) mapHandlers() {
 	for endpoint, route := range p.config.Routes {
 		go func(endpoint, destination string) {
-			http.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
+			http.HandleFunc(endpoint, middleware.Logger(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 				w.Write([]byte(destination))
-			})
+			}))
 		}(endpoint, route.Destination)
 	}
 }
