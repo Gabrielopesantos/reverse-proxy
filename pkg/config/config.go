@@ -12,13 +12,19 @@ const (
 	DefaultPath = "config.yaml"
 )
 
-type Route struct {
-	Destination string   `yaml:"destination"`
-	Middleware  []string `yaml:"middleware"`
+type Config struct {
+	Server `yaml:"server"`
+	Routes map[string]Route `yaml:"routes"`
 }
 
-type Config struct {
-	Routes map[string]Route
+type Server struct {
+	Address            string `yaml:"address"`
+	ReadTimeoutSeconds uint   `yaml:"read_timeout"`
+}
+
+type Route struct {
+	Upstreams  []string `yaml:"upstreams"`
+	Middleware []string `yaml:"middleware"`
 }
 
 func ReadConfig(configPath string) (*Config, error) {
@@ -49,13 +55,10 @@ func readConfig(config *Config) error {
 		return err
 	}
 
-	configRoutes := make(map[string]Route)
-	err = yaml.Unmarshal(configFileContent, configRoutes)
+	err = yaml.Unmarshal(configFileContent, config)
 	if err != nil {
 		return err
 	}
-
-	config.Routes = configRoutes
 
 	return nil
 }

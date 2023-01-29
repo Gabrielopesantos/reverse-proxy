@@ -1,15 +1,16 @@
-"/first":
-  destination: "127.0.0.1:8081"
-  middleware: []
+server:
+  address: :8080
+  read_timeout: 10
 
-"/second":
-  destination: "127.0.0.1:8082"
-  middleware: []
+routes:
+  /first:
+    upstreams: ["localhost:8081"]
+    middleware: []
 
-"/third":
-  destination: "127.0.0.1:8083"
-  middleware: []
+  /second:
+    upstreams: ["127.0.0.1:8082"]
+    middleware: []
 
-"/fourth":
-  destination: "127.0.0.1:8084"
-  middleware: []
+  /third:
+    upstreams: ["127.0.0.1:8083"]
+    middleware: []

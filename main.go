@@ -16,5 +16,5 @@ func main() {
 	go config.WatchConfig(cfg)
 
 	proxy := proxy.NewServer(cfg)
-	proxy.Run()
+	proxy.Start()
 }
