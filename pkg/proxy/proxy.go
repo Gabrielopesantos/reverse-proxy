@@ -1,9 +1,13 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
@@ -25,25 +29,39 @@ func NewServer(config *config.Config) *Proxy {
 	}
 }
 
-func (p *Proxy) Start() {
-	// Setup endpoints
+func (p *Proxy) Start() error {
+	go func() {
+		log.Printf("Server is listening on address: %s", p.config.Server.Address)
+		if err := p.server.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("Error starting server. Err: %s", err)
+		}
+	}()
+
+	// Map Handlers
 	p.provision()
 
-	if err := p.server.ListenAndServe(); err != http.ErrServerClosed {
-		log.Printf("Error ListenAndServe: %v", err)
-	}
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	<-quit
+
+	ctx, shutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdown()
+
+	log.Println("Server Exited Properly")
+	return p.server.Shutdown(ctx)
 }
 
 func (p *Proxy) provision() {
-	for endpoint, route := range p.config.Routes {
-		p.mapRoute(endpoint, route)
+	for route, routeData := range p.config.Routes {
+		p.mapHandler(route, routeData)
 	}
 }
 
-func (p *Proxy) mapRoute(endpoint string, route config.Route) {
-	http.HandleFunc(endpoint, middleware.Logger(func(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) mapHandler(route string, routeData config.Route) {
+	http.HandleFunc(route, middleware.Logger(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Server", "Gabriel")
-		resp, err := http.Get("http://" + route.Upstreams[0])
+		resp, err := http.Get("http://" + routeData.Upstreams[0])
 		if err != nil {
 			w.WriteHeader(resp.StatusCode)
 			return
