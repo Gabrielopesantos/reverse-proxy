@@ -24,6 +24,10 @@ Others:
   middleware: []
 ```
 
+### References
+- [Traefik](https://doc.traefik.io/traefik/)
+- [OpenFaas Watchdog](https://github.com/openfaas/of-watchdog)
+- [Caddy](https://caddyserver.com/)
 
 ### LICENSE
 MIT
