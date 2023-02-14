@@ -2,16 +2,17 @@ package proxy
 
 import (
 	"context"
-	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
-	"github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
+	//"github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 )
 
 type Proxy struct {
@@ -31,7 +32,7 @@ func NewServer(config *config.Config) *Proxy {
 
 func (p *Proxy) Start() error {
 	go func() {
-		log.Printf("Server is listening on address: %s", p.config.Server.Address)
+		log.Printf("Server listening on address: %s", p.config.Server.Address)
 		if err := p.server.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalf("Error starting server. Err: %s", err)
 		}
@@ -53,21 +54,20 @@ func (p *Proxy) Start() error {
 }
 
 func (p *Proxy) provision() {
-	for route, routeData := range p.config.Routes {
-		p.mapHandler(route, routeData)
-	}
-}
-
-func (p *Proxy) mapHandler(route string, routeData config.Route) {
-	http.HandleFunc(route, middleware.Logger(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Server", "Gabriel")
-		resp, err := http.Get("http://" + routeData.Upstreams[0])
+	for pattern, routeConfig := range p.config.Routes {
+		// NOTE: Let's assume that there's only an upstream target for now
+		url, err := url.Parse(routeConfig.Upstreams[0])
 		if err != nil {
-			w.WriteHeader(resp.StatusCode)
-			return
+			// NOTE: Return an error
+			log.Fatalf("Failed to parse url %s. Err: %s", url, err)
 		}
-		w.WriteHeader(200)
-		body, _ := io.ReadAll(resp.Body)
-		w.Write(body)
-	}))
+		proxy := httputil.NewSingleHostReverseProxy(url)
+
+		originDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originDirector(req)
+		}
+
+		http.Handle(pattern, proxy)
+	}
 }

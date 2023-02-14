@@ -4,13 +4,13 @@ server:
 
 routes:
   /first:
-    upstreams: ["localhost:8081"]
+    upstreams: ["http://localhost:8081"]
     middleware: []
 
   /second:
-    upstreams: ["127.0.0.1:8082"]
+    upstreams: ["http://127.0.0.1:8082"]
     middleware: []
 
   /third:
-    upstreams: ["127.0.0.1:8083"]
+    upstreams: ["http://127.0.0.1:8083"]
     middleware: []

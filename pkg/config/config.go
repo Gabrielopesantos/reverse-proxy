@@ -14,7 +14,7 @@ const (
 
 type Config struct {
 	Server `yaml:"server"`
-	Routes map[string]Route `yaml:"routes"`
+	Routes map[string]*Route `yaml:"routes"`
 }
 
 type Server struct {
