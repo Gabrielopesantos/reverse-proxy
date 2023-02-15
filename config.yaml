@@ -4,7 +4,9 @@ server:
 
 routes:
   /first:
-    upstreams: ["http://localhost:8081"]
+    upstreams: 
+      - "http://localhost:8081"
+      - "http://localhost:8084"
     middleware: []
 
   /second:

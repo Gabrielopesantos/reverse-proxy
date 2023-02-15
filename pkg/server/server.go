@@ -55,7 +55,7 @@ func (s *Server) Start() error {
 func (s *Server) provision() {
 	router := http.NewServeMux()
 	for pattern, routeConfig := range s.config.Routes {
-		proxy := proxy.New(routeConfig.Upstreams)
+		proxy := proxy.New(routeConfig)
 		router.Handle(pattern, proxy)
 	}
 
