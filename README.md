@@ -4,11 +4,12 @@ Simple implementation of a configurable reverse proxy
 
 ### Roadmap (ideas)
 
-- [ ] Protocol support for HTTP
-- [ ] Rate limiting
+- [x] Protocol support for HTTP
 - [ ] Web Application Firewall
-- [ ] Caching
 - [ ] Load Balancing
+- [ ] Middleware
+    - [ ] Caching
+    - [ ] Rate limiting
 
 Others:
 - [ ] Configurable middlware with json/yaml

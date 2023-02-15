@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
-	"github.com/gabrielopesantos/reverse-proxy/pkg/proxy"
+	"github.com/gabrielopesantos/reverse-proxy/pkg/server"
 )
 
 func main() {
@@ -15,6 +15,6 @@ func main() {
 
 	go config.WatchConfig(cfg)
 
-	proxy := proxy.NewServer(cfg)
-	proxy.Start()
+	server := server.New(cfg)
+	server.Start()
 }
