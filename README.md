@@ -6,7 +6,7 @@ Simple implementation of a configurable reverse proxy
 
 - [x] Protocol support for HTTP
 - [ ] Web Application Firewall
-- [ ] Load Balancing
+- [x] Load Balancing (WIP)
 - [ ] Middleware
     - [ ] Caching
     - [ ] Rate limiting

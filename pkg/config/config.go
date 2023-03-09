@@ -23,8 +23,9 @@ type Server struct {
 }
 
 type Route struct {
-	Upstreams  []string `yaml:"upstreams"`
-	Middleware []string `yaml:"middleware"`
+	Upstreams          []string `yaml:"upstreams"`
+	LoadBalancerPolicy string   `yaml:"lb_policy"`
+	Middleware         []string `yaml:"middleware"`
 }
 
 func ReadConfig(configPath string) (*Config, error) {
@@ -42,7 +43,7 @@ func WatchConfig(config *Config) error {
 	for {
 		err = readConfig(config)
 		if err != nil {
-			log.Printf("Could not read updated Configuration file: %v", err)
+			log.Printf("Could not read updated configuration file: %v", err)
 		}
 
 		time.Sleep(5 * time.Second)

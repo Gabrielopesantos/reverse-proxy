@@ -4,15 +4,13 @@ server:
 
 routes:
   /first:
-    upstreams: 
+    upstreams:
       - "http://localhost:8081"
+      - "http://localhost:8082"
       - "http://localhost:8084"
+    lb_policy: "round_robin" # "random", "first" and "round_robin"
     middleware: []
 
   /second:
-    upstreams: ["http://127.0.0.1:8082"]
-    middleware: []
-
-  /third:
     upstreams: ["http://127.0.0.1:8083"]
     middleware: []

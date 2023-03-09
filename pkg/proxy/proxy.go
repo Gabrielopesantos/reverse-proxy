@@ -35,13 +35,22 @@ func New(routeConfig *config.Route) *Proxy {
 		hosts[host] = proxy
 	}
 	p.hosts = hosts
-	p.lb = balancer.NewRandomBalancer(routeConfig.Upstreams)
+	// Load Balancer Policy
+	switch routeConfig.LoadBalancerPolicy {
+	case "random":
+		p.lb = balancer.NewRandomBalancer(routeConfig.Upstreams)
+	case "round_robin":
+		p.lb = balancer.NewRoundRobinBalancer(routeConfig.Upstreams)
+	default:
+		// Select first host defined by default (random for now)
+		p.lb = balancer.NewRandomBalancer(routeConfig.Upstreams)
+	}
 
 	return p
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := p.lb.Balance()
-    log.Printf("Selected %s", host)
+	log.Printf("Selected %s", host)
 	p.hosts[host].ServeHTTP(w, r)
 }
