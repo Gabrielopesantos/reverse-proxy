@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
@@ -34,6 +37,7 @@ func New(routeConfig *config.Route) *Proxy {
 
 		hosts[host] = proxy
 	}
+
 	p.hosts = hosts
 	// Load Balancer Policy
 	switch routeConfig.LoadBalancerPolicy {
@@ -46,11 +50,50 @@ func New(routeConfig *config.Route) *Proxy {
 		p.lb = balancer.NewRandomBalancer(routeConfig.Upstreams)
 	}
 
+	go p.monitorUpstreamHostsHealth()
+
 	return p
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host := p.lb.Balance()
-	log.Printf("Selected %s", host)
+	host, _ := p.lb.Balance()
 	p.hosts[host].ServeHTTP(w, r)
+}
+
+func (p *Proxy) monitorUpstreamHostsHealth() {
+	var hostIndex int
+	for host := range p.hosts {
+		go p.healthCheck(host, hostIndex)
+	}
+}
+
+func (p *Proxy) healthCheck(hostAddr string, hostIndex int) {
+	ticker := time.NewTicker(5 * time.Second) // Going to be healthcheck interval
+
+	for range ticker.C {
+		if isAlive(hostAddr) {
+			log.Printf("Successfully reached upstream '%s', removing from list of unhealhty hosts", hostAddr)
+			p.lb.Remove(hostIndex)
+		} else {
+			log.Printf("Failed to reach upstream '%s', adding to list of unhealthy hosts", hostAddr)
+			p.lb.Add(hostIndex)
+		}
+	}
+}
+
+// Unrelated functions
+func isAlive(hostAddr string) bool {
+	// `host` cannot include the protocol (http://)
+	hostAddr = hostAddr[7:] // tmp
+	addr, err := net.ResolveTCPAddr("tcp", hostAddr)
+	if err != nil {
+		return false
+	}
+	resolveAddr := fmt.Sprintf("%s:%d", addr.IP, addr.Port)
+	conn, err := net.DialTimeout("tcp", resolveAddr, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

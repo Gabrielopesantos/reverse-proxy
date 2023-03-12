@@ -37,8 +37,7 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	// Map Handlers
-	s.provision()
+	s.mapProxies()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -52,7 +51,7 @@ func (s *Server) Start() error {
 	return s.server.Shutdown(ctx)
 }
 
-func (s *Server) provision() {
+func (s *Server) mapProxies() {
 	router := http.NewServeMux()
 	for pattern, routeConfig := range s.config.Routes {
 		proxy := proxy.New(routeConfig)
