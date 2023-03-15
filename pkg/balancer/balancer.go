@@ -4,12 +4,10 @@ import (
 	"errors"
 	"math/rand"
 	"sync"
-
-	"golang.org/x/exp/slices"
 )
 
 var (
-	NoHostError = errors.New("No healthy upstream host found")
+	NoHostError = errors.New("no healthy upstream host found")
 )
 
 // A Balancer selects which target host is going to be consumed based on the
@@ -17,34 +15,33 @@ var (
 //
 // Balance should return URL of the host that is going to be requests
 type Balancer interface {
-	// These methods will be used for checking alives
-	Add(int)
-	Remove(int)
+	Add(string)
+	Remove(string)
 	Balance() (string, error)
 }
 
 type BaseBalancer struct {
 	sync.RWMutex
-	hosts     []string
-	unhealthy []int // Indexes of unhealthy upstream hosts
+	hosts []string
 }
 
-func (b *BaseBalancer) Remove(hostPosIndex int) {
+func (b *BaseBalancer) Remove(host string) {
 	b.Lock()
 	defer b.Unlock()
-	b.unhealthy = append(b.unhealthy, hostPosIndex)
-}
 
-func (b *BaseBalancer) Add(hostPosIndex int) {
-	b.Lock()
-	defer b.Unlock()
-	var unhealthyIndexPos int
-	for i, hostIndex := range b.unhealthy {
-		if hostPosIndex == hostIndex {
-			unhealthyIndexPos = i
+	for i, h := range b.hosts {
+		if h == host {
+			b.hosts = append(b.hosts[:i], b.hosts[i+1:]...)
+			break
 		}
 	}
-	b.unhealthy = slices.Delete(b.unhealthy, unhealthyIndexPos, unhealthyIndexPos+1)
+}
+
+func (b *BaseBalancer) Add(host string) {
+	b.Lock()
+	defer b.Unlock()
+
+	b.hosts = append(b.hosts, host)
 }
 
 type RandomBalancer struct {
@@ -54,15 +51,17 @@ type RandomBalancer struct {
 func NewRandomBalancer(hosts []string) Balancer {
 	return &RandomBalancer{
 		BaseBalancer: BaseBalancer{
-			hosts:     hosts,
-			unhealthy: make([]int, 1),
+			hosts: hosts,
 		},
 	}
 }
 
 func (r *RandomBalancer) Balance() (string, error) {
-	// Still doesn't handle cases where none of the upstreams hosts is unhealth
-	return r.hosts[rand.Intn(len(r.hosts))], nil
+	if len(r.hosts) == 0 {
+		return "", NoHostError
+	}
+	randomHostIndex := rand.Intn(len(r.hosts))
+	return r.hosts[randomHostIndex], nil
 }
 
 type RoundRobinBalancer struct {
@@ -73,15 +72,17 @@ type RoundRobinBalancer struct {
 func NewRoundRobinBalancer(hosts []string) Balancer {
 	return &RoundRobinBalancer{
 		BaseBalancer: BaseBalancer{
-			hosts:     hosts,
-			unhealthy: make([]int, 1),
+			hosts: hosts,
 		},
 		currentHostIndex: 0,
 	}
 }
 
+// NOTE: Doesn't work with current approach
 func (rr *RoundRobinBalancer) Balance() (string, error) {
-	// Still doesn't handle cases where none of the upstreams hosts is unhealth
+	if len(rr.hosts) == 0 {
+		return "", NoHostError
+	}
 	host := rr.hosts[rr.currentHostIndex]
 
 	if rr.currentHostIndex <= len(rr.hosts)-2 {
