@@ -16,17 +16,15 @@ import (
 
 type Proxy struct {
 	sync.RWMutex
-	hosts map[string]*httputil.ReverseProxy
-	lb    balancer.Balancer
-
-	// Keep a record of healthy upstream hosts
-	healthy map[string]bool
+	hosts       map[string]*httputil.ReverseProxy
+	hostsHealth map[string]bool
+	lb          balancer.Balancer
 }
 
 func New(routeConfig *config.Route) *Proxy {
 	p := &Proxy{}
 	hosts := make(map[string]*httputil.ReverseProxy)
-	healthy := make(map[string]bool)
+	hostsHealth := make(map[string]bool)
 	for _, host := range routeConfig.Upstreams {
 		upstreamUrl, err := url.Parse(host)
 		if err != nil {
@@ -40,24 +38,17 @@ func New(routeConfig *config.Route) *Proxy {
 			originDirector(req)
 		}
 
-        // NOTE: Start by considering all upstreams unhealhty and validate it first isAlive check 
-		healthy[host] = true
+		hostsHealth[host] = false
+
 		hosts[host] = proxy
 	}
 
+	// Set Hosts
 	p.hosts = hosts
-	// Load Balancer Policy
-	switch routeConfig.LoadBalancerPolicy {
-	case "random":
-		p.lb = balancer.NewRandomBalancer(routeConfig.Upstreams)
-	case "round_robin":
-		p.lb = balancer.NewRoundRobinBalancer(routeConfig.Upstreams)
-	default:
-		// Select first host defined by default (random for now)
-		p.lb = balancer.NewRandomBalancer(routeConfig.Upstreams)
-	}
-
-	p.healthy = healthy
+	// Set hostsHealth
+	p.hostsHealth = hostsHealth
+	// Set load balancer policy
+	p.lb = getLoadBalancer(routeConfig.LoadBalancerPolicy)(p.hostsHealth)
 
 	go p.monitorUpstreamHostsHealth()
 
@@ -69,10 +60,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// 502?
 		http.Error(w, err.Error(), http.StatusBadGateway)
-        return
+		return
 	}
 
-	log.Println(host)
+	log.Printf("Host returned: %s", host)
 	p.hosts[host].ServeHTTP(w, r)
 }
 
@@ -83,17 +74,21 @@ func (p *Proxy) monitorUpstreamHostsHealth() {
 }
 
 func (p *Proxy) healthCheck(hostAddr string) {
-	ticker := time.NewTicker(5 * time.Second) // Going to be healthcheck interval
+	// NOTE: healthcheck interval config
+	ticker := time.NewTicker(5 * time.Second)
+	// NOTE: Remove
 
 	for range ticker.C {
-		if isAlive(hostAddr) && !p.markedAsHealthy(hostAddr) {
-			log.Printf("Successfully reached upstream '%s'", hostAddr)
-			p.setHealthy(hostAddr, true)
-			p.lb.Add(hostAddr)
-		} else if !isAlive(hostAddr) && p.markedAsHealthy(hostAddr) {
-			log.Printf("Failed to reach upstream '%s'", hostAddr)
-			p.setHealthy(hostAddr, false)
-			p.lb.Remove(hostAddr)
+		if isAlive(hostAddr) {
+			if !p.markedAsHealthy(hostAddr) {
+				log.Printf("successfully reached upstream host '%s', marking as healthy", hostAddr)
+				p.lb.SetHealthStatus(hostAddr, true)
+			}
+		} else {
+			if p.markedAsHealthy(hostAddr) {
+				p.lb.SetHealthStatus(hostAddr, false)
+				log.Printf("could not reach upstream host '%s', marking as unhealthy", hostAddr)
+			}
 		}
 	}
 }
@@ -102,14 +97,18 @@ func (p *Proxy) markedAsHealthy(host string) bool {
 	p.Lock()
 	defer p.Unlock()
 
-	return p.healthy[host]
+	return p.hostsHealth[host]
 }
 
-func (p *Proxy) setHealthy(host string, healthy bool) {
-	p.Lock()
-	defer p.Unlock()
-
-	p.healthy[host] = healthy
+func getLoadBalancer(policy balancer.LoadBalancerPolicy) func(map[string]bool) balancer.Balancer {
+	switch policy {
+	case balancer.RANDOM:
+		return balancer.NewRandomBalancer
+	// case balancer.ROUND_ROBIN:
+	// 	return balancer.NewRoundRobinBalancer
+	default:
+		return balancer.NewRandomBalancer
+	}
 }
 
 // *** Unrelated functions ***

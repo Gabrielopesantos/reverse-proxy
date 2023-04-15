@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,9 +24,9 @@ type Server struct {
 }
 
 type Route struct {
-	Upstreams          []string `yaml:"upstreams"`
-	LoadBalancerPolicy string   `yaml:"lb_policy"`
-	Middleware         []string `yaml:"middleware"`
+	Upstreams          []string                    `yaml:"upstreams"`
+	LoadBalancerPolicy balancer.LoadBalancerPolicy `yaml:"lb_policy"`
+	Middleware         []string                    `yaml:"middleware"`
 }
 
 func ReadConfig(configPath string) (*Config, error) {
