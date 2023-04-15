@@ -4,10 +4,19 @@ import (
 	"errors"
 	"math/rand"
 	"sync"
+
+	"github.com/gabrielopesantos/reverse-proxy/pkg/utilities"
 )
 
 var (
 	NoHostError = errors.New("no healthy upstream host found")
+)
+
+type LoadBalancerPolicy string
+
+const (
+	RANDOM      LoadBalancerPolicy = "random"
+	ROUND_ROBIN                    = "round_robin"
 )
 
 // A Balancer selects which target host is going to be consumed based on the
@@ -15,81 +24,92 @@ var (
 //
 // Balance should return URL of the host that is going to be requests
 type Balancer interface {
-	Add(string)
-	Remove(string)
+	SetHealthStatus(string, bool)
 	Balance() (string, error)
 }
 
 type BaseBalancer struct {
 	sync.RWMutex
-	hosts []string
+	hosts       map[string]bool
+	indexToHost map[uint]string
 }
 
-func (b *BaseBalancer) Remove(host string) {
+func (b *BaseBalancer) SetHealthStatus(host string, isHealthy bool) {
 	b.Lock()
 	defer b.Unlock()
 
-	for i, h := range b.hosts {
-		if h == host {
-			b.hosts = append(b.hosts[:i], b.hosts[i+1:]...)
-			break
-		}
-	}
-}
-
-func (b *BaseBalancer) Add(host string) {
-	b.Lock()
-	defer b.Unlock()
-
-	b.hosts = append(b.hosts, host)
+	b.hosts[host] = isHealthy
 }
 
 type RandomBalancer struct {
 	BaseBalancer
 }
 
-func NewRandomBalancer(hosts []string) Balancer {
-	return &RandomBalancer{
+func (b *BaseBalancer) setHostToIndex() {
+	b.Lock()
+	defer b.Unlock()
+
+	var indexPosition uint
+	for k := range b.hosts {
+		b.indexToHost[indexPosition] = k
+		indexPosition += 1
+	}
+}
+
+func NewRandomBalancer(hosts map[string]bool) Balancer {
+	balancer := &RandomBalancer{
 		BaseBalancer: BaseBalancer{
-			hosts: hosts,
+			hosts:       hosts,
+			indexToHost: make(map[uint]string, len(hosts)),
 		},
 	}
+	balancer.setHostToIndex()
+
+	return balancer
 }
 
 func (r *RandomBalancer) Balance() (string, error) {
-	if len(r.hosts) == 0 {
-		return "", NoHostError
-	}
-	randomHostIndex := rand.Intn(len(r.hosts))
-	return r.hosts[randomHostIndex], nil
-}
+	hostsChecked := utilities.NewSet[string]()
+	for {
+		randHostIndex := rand.Intn(len(r.hosts))
+		host := r.indexToHost[uint(randHostIndex)]
+		if r.hosts[host] {
+			return host, nil
+		}
 
-type RoundRobinBalancer struct {
-	BaseBalancer
-	currentHostIndex int
-}
-
-func NewRoundRobinBalancer(hosts []string) Balancer {
-	return &RoundRobinBalancer{
-		BaseBalancer: BaseBalancer{
-			hosts: hosts,
-		},
-		currentHostIndex: 0,
+		hostsChecked.Add(host)
+		if hostsChecked.Len() == len(r.hosts) {
+			return "", NoHostError
+		}
 	}
 }
 
-// NOTE: Doesn't work with current approach
-func (rr *RoundRobinBalancer) Balance() (string, error) {
-	if len(rr.hosts) == 0 {
-		return "", NoHostError
-	}
-	host := rr.hosts[rr.currentHostIndex]
-
-	if rr.currentHostIndex <= len(rr.hosts)-2 {
-		rr.currentHostIndex += 1
-	} else {
-		rr.currentHostIndex = 0
-	}
-
-	return host, nil
-}
+// type RoundRobinBalancer struct {
+// 	BaseBalancer
+// 	currentHostIndex int
+// }
+//
+// func NewRoundRobinBalancer(hosts []string) Balancer {
+// 	return &RoundRobinBalancer{
+// 		BaseBalancer: BaseBalancer{
+// 			hosts: hosts,
+// 		},
+// 		currentHostIndex: 0,
+// 	}
+// }
+//
+// // NOTE: Doesn't work with current approach
+// func (rr *RoundRobinBalancer) Balance() (string, error) {
+// 	if len(rr.hosts) == 0 {
+// 		return "", NoHostError
+// 	}
+// 	host := rr.hosts[rr.currentHostIndex]
+//
+// 	if rr.currentHostIndex <= len(rr.hosts)-2 {
+// 		rr.currentHostIndex += 1
+// 	} else {
+// 		rr.currentHostIndex = 0
+// 	}
+//
+// 	return host, nil
+// }

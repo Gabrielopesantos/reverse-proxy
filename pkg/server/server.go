@@ -56,6 +56,7 @@ func (s *Server) mapProxies() {
 	for pattern, routeConfig := range s.config.Routes {
 		proxy := proxy.New(routeConfig)
 		router.Handle(pattern, proxy)
+		log.Printf("Handler set for route %s", pattern)
 	}
 
 	s.server.Handler = router
