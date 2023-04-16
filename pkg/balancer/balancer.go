@@ -34,6 +34,16 @@ type BaseBalancer struct {
 	indexToHost map[uint]string
 }
 
+func newBaseBalancer(hosts map[string]bool) *BaseBalancer {
+	b := &BaseBalancer{
+		hosts:       hosts,
+		indexToHost: make(map[uint]string, len(hosts)),
+	}
+	b.setHostToIndex()
+
+	return b
+}
+
 func (b *BaseBalancer) SetHealthStatus(host string, isHealthy bool) {
 	b.Lock()
 	defer b.Unlock()
@@ -42,13 +52,10 @@ func (b *BaseBalancer) SetHealthStatus(host string, isHealthy bool) {
 }
 
 type RandomBalancer struct {
-	BaseBalancer
+	*BaseBalancer
 }
 
 func (b *BaseBalancer) setHostToIndex() {
-	b.Lock()
-	defer b.Unlock()
-
 	var indexPosition uint
 	for k := range b.hosts {
 		b.indexToHost[indexPosition] = k
@@ -57,18 +64,15 @@ func (b *BaseBalancer) setHostToIndex() {
 }
 
 func NewRandomBalancer(hosts map[string]bool) Balancer {
-	balancer := &RandomBalancer{
-		BaseBalancer: BaseBalancer{
-			hosts:       hosts,
-			indexToHost: make(map[uint]string, len(hosts)),
-		},
+	return &RandomBalancer{
+		BaseBalancer: newBaseBalancer(hosts),
 	}
-	balancer.setHostToIndex()
-
-	return balancer
 }
 
 func (r *RandomBalancer) Balance() (string, error) {
+	r.BaseBalancer.Lock()
+	defer r.BaseBalancer.Unlock()
+
 	hostsChecked := utilities.NewSet[string]()
 	for {
 		randHostIndex := rand.Intn(len(r.hosts))
@@ -84,32 +88,46 @@ func (r *RandomBalancer) Balance() (string, error) {
 	}
 }
 
-// type RoundRobinBalancer struct {
-// 	BaseBalancer
-// 	currentHostIndex int
-// }
-//
-// func NewRoundRobinBalancer(hosts []string) Balancer {
-// 	return &RoundRobinBalancer{
-// 		BaseBalancer: BaseBalancer{
-// 			hosts: hosts,
-// 		},
-// 		currentHostIndex: 0,
-// 	}
-// }
-//
-// // NOTE: Doesn't work with current approach
-// func (rr *RoundRobinBalancer) Balance() (string, error) {
-// 	if len(rr.hosts) == 0 {
-// 		return "", NoHostError
-// 	}
-// 	host := rr.hosts[rr.currentHostIndex]
-//
-// 	if rr.currentHostIndex <= len(rr.hosts)-2 {
-// 		rr.currentHostIndex += 1
-// 	} else {
-// 		rr.currentHostIndex = 0
-// 	}
-//
-// 	return host, nil
-// }
+type RoundRobinBalancer struct {
+	*BaseBalancer
+	currentHostIndex int
+}
+
+func NewRoundRobinBalancer(hosts map[string]bool) Balancer {
+	balancer := &RoundRobinBalancer{
+		BaseBalancer:     newBaseBalancer(hosts),
+		currentHostIndex: 0,
+	}
+	balancer.setHostToIndex()
+
+	return balancer
+}
+
+func (rr *RoundRobinBalancer) Balance() (string, error) {
+	rr.BaseBalancer.Lock()
+	defer rr.BaseBalancer.Unlock()
+
+	hostsChecked := utilities.NewSet[string]()
+	for {
+		host := rr.indexToHost[uint(rr.currentHostIndex)]
+		if healthy := rr.hosts[host]; !healthy {
+			hostsChecked.Add(host)
+			if hostsChecked.Len() == len(rr.hosts) {
+				return "", NoHostError
+			}
+			rr.incrementCurrentHostIndex()
+			continue
+		}
+		rr.incrementCurrentHostIndex()
+		return host, nil
+	}
+}
+
+func (rr *RoundRobinBalancer) incrementCurrentHostIndex() {
+	// NOTE: Having this seems to be breaking the RoundRobinBalancer Balance method
+	// rr.BaseBalancer.Lock()
+	// defer rr.BaseBalancer.Unlock()
+
+	rr.currentHostIndex += 1
+	rr.currentHostIndex %= len(rr.hosts)
+}

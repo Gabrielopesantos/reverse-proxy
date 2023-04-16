@@ -104,8 +104,8 @@ func getLoadBalancer(policy balancer.LoadBalancerPolicy) func(map[string]bool) b
 	switch policy {
 	case balancer.RANDOM:
 		return balancer.NewRandomBalancer
-	// case balancer.ROUND_ROBIN:
-	// 	return balancer.NewRoundRobinBalancer
+	case balancer.ROUND_ROBIN:
+		return balancer.NewRoundRobinBalancer
 	default:
 		return balancer.NewRandomBalancer
 	}

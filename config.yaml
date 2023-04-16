@@ -8,9 +8,9 @@ routes:
       - "http://localhost:8081"
       - "http://localhost:8082"
       - "http://localhost:8084"
-    lb_policy: "random" # "random", "round_robin"
+    lb_policy: "round_robin" # "random", "round_robin"
     middleware: []
 
   /second:
-    upstreams: ["http://127.0.0.1:8083"]
+    upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
     middleware: []
