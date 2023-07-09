@@ -21,26 +21,27 @@ type Proxy struct {
 	lb          balancer.Balancer
 }
 
-func New(routeConfig *config.Route) *Proxy {
+func New(config *config.Route) (*Proxy, error) {
 	p := &Proxy{}
 	hosts := make(map[string]*httputil.ReverseProxy)
 	hostsHealth := make(map[string]bool)
-	for _, host := range routeConfig.Upstreams {
+	for _, host := range config.Upstreams {
+		if host == "" {
+			// FIXME: This should include the route name
+			return nil, fmt.Errorf("invalid host '%s' provided", host)
+		}
 		upstreamUrl, err := url.Parse(host)
 		if err != nil {
-			// NOTE: Return an error
-			log.Fatalf("Failed to parse url %s. Err: %s", upstreamUrl, err)
+			return nil, fmt.Errorf("failed to parse url '%s': %w", upstreamUrl, err)
 		}
-		proxy := httputil.NewSingleHostReverseProxy(upstreamUrl)
+		rProxy := httputil.NewSingleHostReverseProxy(upstreamUrl)
 
-		originDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
+		originDirector := rProxy.Director
+		rProxy.Director = func(req *http.Request) {
 			originDirector(req)
 		}
-
 		hostsHealth[host] = false
-
-		hosts[host] = proxy
+		hosts[host] = rProxy
 	}
 
 	// Set Hosts
@@ -48,11 +49,11 @@ func New(routeConfig *config.Route) *Proxy {
 	// Set hostsHealth
 	p.hostsHealth = hostsHealth
 	// Set load balancer policy
-	p.lb = getLoadBalancer(routeConfig.LoadBalancerPolicy)(p.hostsHealth)
+	p.lb = getLoadBalancer(config.LoadBalancerPolicy)(p.hostsHealth)
 
 	go p.monitorUpstreamHostsHealth()
 
-	return p
+	return p, nil
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +116,7 @@ func getLoadBalancer(policy balancer.LoadBalancerPolicy) func(map[string]bool) b
 // isAlive: Check if a connection is alive, a connection is considered alive if we can establish a tcp connection
 func isAlive(hostAddr string) bool {
 	// `host` cannot include the protocol (http://)
-	hostAddr = hostAddr[7:] // tmp
+	hostAddr = hostAddr[7:] // FIXME: Protocol cannot be in host addr
 	addr, err := net.ResolveTCPAddr("tcp", hostAddr)
 	if err != nil {
 		return false

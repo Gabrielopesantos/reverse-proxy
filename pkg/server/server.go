@@ -33,11 +33,14 @@ func (s *Server) Start() error {
 	go func() {
 		log.Printf("Server listening on address: %s", s.config.Server.Address)
 		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("Error starting server. Err: %s", err)
+			log.Fatalf("error starting server: %s", err)
 		}
 	}()
 
-	s.mapProxies()
+	err := s.mapProxyHandlers()
+	if err != nil {
+		return err
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -51,13 +54,19 @@ func (s *Server) Start() error {
 	return s.server.Shutdown(ctx)
 }
 
-func (s *Server) mapProxies() {
+func (s *Server) mapProxyHandlers() error {
 	router := http.NewServeMux()
 	for pattern, routeConfig := range s.config.Routes {
-		proxy := proxy.New(routeConfig)
+		// FIXME: proxy name
+		proxy, err := proxy.New(routeConfig)
+		if err != nil {
+			return err
+		}
 		router.Handle(pattern, proxy)
+
 		log.Printf("Handler set for route %s", pattern)
 	}
-
 	s.server.Handler = router
+
+	return nil
 }
