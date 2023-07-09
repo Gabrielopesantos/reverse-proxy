@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
+	// "github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/proxy"
-	//"github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 )
 
 type Server struct {
@@ -41,6 +41,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	// TODO: Healthcheck endpoint for server
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -62,7 +63,12 @@ func (s *Server) mapProxyHandlers() error {
 		if err != nil {
 			return err
 		}
-		router.Handle(pattern, proxy)
+
+		// Set middlewares (TMP)
+		// router.Handle(pattern, middleware.NewLogger(nil).Exec(proxy.ServeHTTP))
+		if len(routeConfig.Middleware.Middlewares) > 0 {
+			router.Handle(pattern, routeConfig.Middleware.Middlewares[0].Exec(proxy.ServeHTTP))
+		}
 
 		log.Printf("Handler set for route %s", pattern)
 	}

@@ -1,6 +1,7 @@
 server:
   address: :8080
   read_timeout: 10
+  healthcheck_internal: 10
 
 routes:
   /first:
@@ -9,8 +10,10 @@ routes:
       - "http://localhost:8082"
       - "http://localhost:8084"
     lb_policy: "round_robin" # "random", "round_robin"
-    middleware: []
+    middleware:
+      logger:
+        stream: stdout
+        mode: dev # ?
 
   /second:
     upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
-    middleware: []

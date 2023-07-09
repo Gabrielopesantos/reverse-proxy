@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -21,6 +22,7 @@ type Proxy struct {
 	lb          balancer.Balancer
 }
 
+// TODO: Log if no upstream is available
 func New(config *config.Route) (*Proxy, error) {
 	p := &Proxy{}
 	hosts := make(map[string]*httputil.ReverseProxy)
@@ -51,7 +53,7 @@ func New(config *config.Route) (*Proxy, error) {
 	// Set load balancer policy
 	p.lb = getLoadBalancer(config.LoadBalancerPolicy)(p.hostsHealth)
 
-	go p.monitorUpstreamHostsHealth()
+	go p.monitorUpstreamHostsHealth(context.TODO())
 
 	return p, nil
 }
@@ -68,16 +70,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.hosts[host].ServeHTTP(w, r)
 }
 
-func (p *Proxy) monitorUpstreamHostsHealth() {
+func (p *Proxy) monitorUpstreamHostsHealth(ctx context.Context) {
 	for host := range p.hosts {
 		go p.healthCheck(host)
 	}
 }
 
 func (p *Proxy) healthCheck(hostAddr string) {
-	// NOTE: healthcheck interval config
+	// FIXME: healthcheck interval config
 	ticker := time.NewTicker(5 * time.Second)
-	// NOTE: Remove
+	// NOTE: Remove / Remove what?
 
 	for range ticker.C {
 		if isAlive(hostAddr) {
