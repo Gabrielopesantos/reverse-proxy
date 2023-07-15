@@ -1,63 +1,44 @@
 package middleware
 
 import (
-	"fmt"
-	"gopkg.in/yaml.v3"
+	// "fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 )
 
-type MiddlewareConfig struct {
-	// FIXME: Make this private
-	Middlewares []Middleware
-}
-
-func (mc *MiddlewareConfig) UnmarshalYAML(value *yaml.Node) error {
-	middlewares := make([]Middleware, 0)
-
-	for i := 0; i < len(value.Content); i += 2 {
-		middlewareName := value.Content[i].Value
-		middlewareConfig := value.Content[i+1]
-		switch middlewareName {
-		case "logger":
-			logger := &Logger{}
-			err := middlewareConfig.Decode(logger)
-			if err != nil {
-				return fmt.Errorf("error parsing logger configuration: %w", err)
-			}
-			middlewares = append(middlewares, logger)
-		}
-	}
-
-	mc.Middlewares = middlewares
-
-	return nil
-}
-
 type Middleware interface {
 	// FIXME: Not sure about `Exec`
 	Exec(http.HandlerFunc) http.HandlerFunc
 }
 
-// TODO: Add logging type (json/human readable), etc
 type Logger struct {
-	Stream io.Writer `yaml:"stream"`
-	Mode   string    `yaml:"mode"`
+	// FIXME: Rename
+	StreamType string `json:"stream"`
+	Mode       string `json:"mode"`
+
+	// FIXME: Is this field going to be needed?
 	name   string
+	stream io.Writer
 	logger *log.Logger
 }
 
-func NewLogger(stream io.Writer) *Logger {
-	if stream == nil {
+// FIXME: Consider rename and accept files
+func (l *Logger) Initialize() {
+	var stream io.Writer
+	switch l.StreamType {
+	case "stdout":
+		stream = os.Stdout
+
+	case "stderr":
+		stream = os.Stderr
+
+	default:
 		stream = os.Stdout
 	}
-	return &Logger{
-		name:   "Logger",
-		Stream: stream,
-		logger: log.New(stream, "", log.LstdFlags),
-	}
+
+	l.logger = log.New(stream, "", log.LstdFlags)
 }
 
 func (l *Logger) Exec(next http.HandlerFunc) http.HandlerFunc {
@@ -70,8 +51,12 @@ func (l *Logger) Exec(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// func (l *Logger) UnmarshalYAML(value *yaml.Node) error {
-// 	log.Println("LKAJDKLASJDKLASJDKLASJDKLASJDKLASJDKLASJDKLASJDKLASJDKLSAJDL")
-//
-// 	return nil
-// }
+type RateLimiter struct {
+	Rqs uint `json:"rqs"`
+}
+
+func (rl *RateLimiter) Exec(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+	}
+}

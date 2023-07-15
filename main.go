@@ -10,7 +10,7 @@ import (
 func main() {
 	cfg, err := config.ReadConfig(config.DefaultPath)
 	if err != nil {
-		log.Fatalf("could not read configuration file: %s", err)
+		log.Fatalf("failed to parse the configuration file: %s", err)
 	}
 
 	go config.WatchConfig(cfg)

@@ -51,7 +51,7 @@ func (s *Server) Start() error {
 	ctx, shutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdown()
 
-	log.Println("Server Exited Properly")
+	log.Println("Server exited properly")
 	return s.server.Shutdown(ctx)
 }
 
@@ -65,10 +65,12 @@ func (s *Server) mapProxyHandlers() error {
 		}
 
 		// Set middlewares (TMP)
-		// router.Handle(pattern, middleware.NewLogger(nil).Exec(proxy.ServeHTTP))
-		if len(routeConfig.Middleware.Middlewares) > 0 {
-			router.Handle(pattern, routeConfig.Middleware.Middlewares[0].Exec(proxy.ServeHTTP))
-		}
+		// router.Handle(pattern, middleware.Logger{nil, ""}.Exec(proxy.ServeHTTP))
+		// if len(routeConfig.Middleware.Middlewares) > 0 {
+		router.Handle(pattern, routeConfig.Middleware(0).Exec(proxy.ServeHTTP))
+		// }
+
+		// router.Handle(pattern, proxy)
 
 		log.Printf("Handler set for route %s", pattern)
 	}
