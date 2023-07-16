@@ -53,6 +53,7 @@ func New(config *config.Route) (*Proxy, error) {
 	// Set load balancer policy
 	p.lb = getLoadBalancer(config.LoadBalancerPolicy)(p.hostsHealth)
 
+	// FIXME: This should be executed on start
 	go p.monitorUpstreamHostsHealth(context.TODO())
 
 	return p, nil

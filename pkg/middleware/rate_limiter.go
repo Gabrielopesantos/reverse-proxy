@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -14,43 +15,66 @@ type RateLimiterConfig struct {
 	// Starting with a fixed time window of a second for now
 	Rqs uint `json:"rqs"`
 
-	counter map[string]uint
+	counter map[string]userCount
+}
+
+type userCount struct {
+	numRequests uint
+	*sync.Mutex
+}
+
+func (uc *userCount) reset() {
+	uc.Lock()
+	defer uc.Unlock()
+	uc.numRequests = 0
+}
+
+func (uc *userCount) increment() {
+	uc.Lock()
+	defer uc.Unlock()
+	uc.numRequests++
 }
 
 // FIXME: Context
 func (rl *RateLimiterConfig) Initialize(context context.Context) {
 	go rl.resetter(time.NewTicker(time.Second))
-	rl.counter = make(map[string]uint)
+	rl.counter = make(map[string]userCount)
 }
 
 func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		clientId := readUserIP(r)
-		fmt.Println(clientId)
-		if rl.exceedes(clientId) {
+		userId := readUserIP(r)
+		fmt.Println(userId)
+		if rl.exceedes(userId) {
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
 		}
-
-		rl.counter[clientId] += 1
 
 		next.ServeHTTP(w, r)
 	}
 }
 
-func (rl *RateLimiterConfig) exceedes(client string) bool {
-	numRequests, ok := rl.counter[client]
+func (rl *RateLimiterConfig) exceedes(user string) bool {
+	count, ok := rl.counter[user]
 	if !ok {
 		return false
 	}
-	return numRequests > rl.Rqs
+	count.Lock()
+	defer count.Unlock()
+
+	return count.numRequests > rl.Rqs
+}
+
+func (rl *RateLimiterConfig) userCountIncrement(user string) {
+	count := rl.counter[user]
+	count.increment()
 }
 
 func (rl *RateLimiterConfig) resetter(ticker *time.Ticker) {
 	// Each counter is going to need a lock
 	for range ticker.C {
-		for key := range rl.counter {
-			rl.counter[key] = 0
+		for _, cc := range rl.counter {
+			cc.reset()
 		}
 	}
 }
