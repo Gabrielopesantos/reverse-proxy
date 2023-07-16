@@ -36,8 +36,8 @@ type Route struct {
 }
 
 // FIXME: Temporary solution for testing purposes
-func (r *Route) Middleware(index int) middleware.Middleware {
-	return r.middlewareList[index]
+func (r *Route) Middleware() []middleware.Middleware {
+	return r.middlewareList
 }
 
 func ReadConfig(configPath string) (*Config, error) {

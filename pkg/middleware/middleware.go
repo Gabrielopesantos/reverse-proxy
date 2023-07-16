@@ -52,11 +52,13 @@ func (l *Logger) Exec(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type RateLimiter struct {
+	// WIP
 	Rqs uint `json:"rqs"`
 }
 
 func (rl *RateLimiter) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println("RateLimiter middleware")
 		next.ServeHTTP(w, r)
 	}
 }

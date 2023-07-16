@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
-	// "github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/proxy"
 )
 
@@ -58,20 +57,18 @@ func (s *Server) Start() error {
 func (s *Server) mapProxyHandlers() error {
 	router := http.NewServeMux()
 	for pattern, routeConfig := range s.config.Routes {
-		// FIXME: proxy name
-		proxy, err := proxy.New(routeConfig)
+		rProxy, err := proxy.New(routeConfig)
 		if err != nil {
 			return err
 		}
 
-		// Set middlewares (TMP)
-		// router.Handle(pattern, middleware.Logger{nil, ""}.Exec(proxy.ServeHTTP))
-		// if len(routeConfig.Middleware.Middlewares) > 0 {
-		router.Handle(pattern, routeConfig.Middleware(0).Exec(proxy.ServeHTTP))
-		// }
+		// Set middleware
+		handler := http.HandlerFunc(rProxy.ServeHTTP)
+		for i := len(routeConfig.Middleware()) - 1; i >= 0; i-- {
+			handler = routeConfig.Middleware()[i].Exec(handler.ServeHTTP)
+		}
 
-		// router.Handle(pattern, proxy)
-
+		router.Handle(pattern, handler)
 		log.Printf("Handler set for route %s", pattern)
 	}
 	s.server.Handler = router
