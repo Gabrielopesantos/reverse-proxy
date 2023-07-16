@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -30,7 +31,7 @@ type Route struct {
 	Upstreams          []string                    `yaml:"upstreams"`
 	LoadBalancerPolicy balancer.LoadBalancerPolicy `yaml:"lb_policy"`
 	// FIXME: Currently doesn't seem to be possible to unmarshall directly into a slice of MiddlewareInternalRepr
-	MiddlewareInternalRepr map[string]interface{} `yaml:"middleware"`
+	MiddlewareInternalRepr map[middleware.MiddlewareType]interface{} `yaml:"middleware"`
 
 	middlewareList []middleware.Middleware `yaml:"middleware"`
 }
@@ -83,28 +84,29 @@ func parseRoutesMiddleware(config *Config) error {
 	for _, routeConfig := range config.Routes {
 		for mwType, mwConfig := range routeConfig.MiddlewareInternalRepr {
 			switch mwType {
-			case "logger":
+			case middleware.LOGGER:
 				enc, err := json.Marshal(mwConfig)
 				if err != nil {
 					return fmt.Errorf("failed to marshal logger middleware configuration: %w", err)
 				}
-				loggerConfig := &middleware.Logger{}
+				loggerConfig := &middleware.LoggerConfig{}
 				err = json.Unmarshal(enc, loggerConfig)
 				if err != nil {
 					return fmt.Errorf("failed to unmarshal logger middleware configuration enconding: %w", err)
 				}
 				loggerConfig.Initialize()
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(loggerConfig))
-			case "rate_limiter":
+			case middleware.RATE_LIMITER:
 				enc, err := json.Marshal(mwConfig)
 				if err != nil {
 					return fmt.Errorf("failed to encode rate limiter middleware configuration: %w", err)
 				}
-				raterLimiterConfig := &middleware.RateLimiter{}
+				raterLimiterConfig := &middleware.RateLimiterConfig{}
 				err = json.Unmarshal(enc, raterLimiterConfig)
 				if err != nil {
 					return fmt.Errorf("failed to unmarshal rate limiter middleware configuration enconding: %w", err)
 				}
+				raterLimiterConfig.Initialize(context.TODO())
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(raterLimiterConfig))
 			default:
 				return fmt.Errorf("unknown middleware type: %s", mwType)

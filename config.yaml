@@ -15,9 +15,13 @@ routes:
         stream: stdout
         mode: dev
       rate_limiter:
-        rqs: 3
+        rqs: 5
 
   /second:
     upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
     middleware:
-      rate_limiter: {}
+      logger:
+        stream: stdout
+        mode: prod
+      rate_limiter:
+        rqs: 1
