@@ -25,3 +25,5 @@ routes:
         mode: prod
       rate_limiter:
         rqs: 1
+      basic_auth:
+        file: ./examples/basic_auth

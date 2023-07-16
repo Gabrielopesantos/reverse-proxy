@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	DefaultPath = "config.yaml"
+	DefaultPath = "examples/config.yaml"
 )
 
 type Config struct {
@@ -83,12 +83,12 @@ func readConfig(config *Config) error {
 func parseRoutesMiddleware(config *Config) error {
 	for _, routeConfig := range config.Routes {
 		for mwType, mwConfig := range routeConfig.MiddlewareInternalRepr {
+			enc, err := json.Marshal(mwConfig)
+			if err != nil {
+				return fmt.Errorf("failed to marshal middleware configuration with type: %s: %w", mwType, err)
+			}
 			switch mwType {
 			case middleware.LOGGER:
-				enc, err := json.Marshal(mwConfig)
-				if err != nil {
-					return fmt.Errorf("failed to marshal logger middleware configuration: %w", err)
-				}
 				loggerConfig := &middleware.LoggerConfig{}
 				err = json.Unmarshal(enc, loggerConfig)
 				if err != nil {
@@ -97,10 +97,6 @@ func parseRoutesMiddleware(config *Config) error {
 				loggerConfig.Initialize()
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(loggerConfig))
 			case middleware.RATE_LIMITER:
-				enc, err := json.Marshal(mwConfig)
-				if err != nil {
-					return fmt.Errorf("failed to encode rate limiter middleware configuration: %w", err)
-				}
 				raterLimiterConfig := &middleware.RateLimiterConfig{}
 				err = json.Unmarshal(enc, raterLimiterConfig)
 				if err != nil {
@@ -108,6 +104,16 @@ func parseRoutesMiddleware(config *Config) error {
 				}
 				raterLimiterConfig.Initialize(context.TODO())
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(raterLimiterConfig))
+			case middleware.BASIC_AUTH:
+				basicAuthConfig := &middleware.BasicAuthConfig{}
+				err = json.Unmarshal(enc, basicAuthConfig)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal basic auth middleware configuration enconding: %w", err)
+				}
+				if err := basicAuthConfig.Initialize(); err != nil {
+					return err
+				}
+				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(basicAuthConfig))
 			default:
 				return fmt.Errorf("unknown middleware type: %s", mwType)
 			}

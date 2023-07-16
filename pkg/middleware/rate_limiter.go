@@ -5,7 +5,6 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -44,7 +43,6 @@ func (rl *RateLimiterConfig) Initialize(context context.Context) {
 func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userId := readUserIP(r)
-		fmt.Println(userId)
 		if rl.exceedes(userId) {
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
