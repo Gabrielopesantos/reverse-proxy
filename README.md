@@ -8,8 +8,10 @@ Simple implementation of a configurable reverse proxy
 - [ ] Web Application Firewall
 - [x] Load Balancing
 - [ ] Middleware
+    - [x] Rate limiting
+    - [x] Basic Auth
+    - [x] Logging
     - [ ] Caching
-    - [ ] Rate limiting
 
 Others:
 - [ ] Configurable middlware with json/yaml
