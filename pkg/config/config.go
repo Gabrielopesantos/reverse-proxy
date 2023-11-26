@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
@@ -20,6 +21,8 @@ const (
 type Config struct {
 	Server `yaml:"server"`
 	Routes map[string]*Route `yaml:"routes"`
+	// NOTE: Why not RWMutex?
+	sync.Mutex
 }
 
 type Server struct {
@@ -41,7 +44,7 @@ func (r *Route) Middleware() []middleware.Middleware {
 	return r.middlewareList
 }
 
-func ReadConfig(configPath string) (*Config, error) {
+func LoadConfig(configPath string) (*Config, error) {
 	config := &Config{}
 	err := readConfig(config)
 	if err != nil {
@@ -51,19 +54,19 @@ func ReadConfig(configPath string) (*Config, error) {
 	return config, nil
 }
 
-func WatchConfig(config *Config) error {
-	var err error
+func (c *Config) Watch(logger *slog.Logger) error {
 	for {
-		err = readConfig(config)
-		if err != nil {
-			log.Printf("could not read updated configuration file: %v", err)
+		if err := readConfig(c); err != nil {
+			logger.Warn(fmt.Sprintf("could not read updated configuration file: %v", err))
 		}
-
 		time.Sleep(5 * time.Second)
 	}
 }
 
 func readConfig(config *Config) error {
+	config.Lock()
+	defer config.Unlock()
+
 	configFileContent, err := os.ReadFile(DefaultPath)
 	if err != nil {
 		return err

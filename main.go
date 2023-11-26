@@ -1,22 +1,27 @@
 package main
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/server"
 )
 
 func main() {
-	cfg, err := config.ReadConfig(config.DefaultPath)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cfg, err := config.LoadConfig(config.DefaultPath)
 	if err != nil {
-		log.Fatalf("failed to parse the configuration file: %s", err)
+		logger.Error(fmt.Sprintf("could not parse the provided configuration file: %s", err))
+		return
 	}
+	go cfg.Watch(logger)
 
-	go config.WatchConfig(cfg)
-
-	server := server.New(cfg)
-	if err = server.Start(); err != nil {
-		log.Fatalf("failed to start server: %s", err)
+	server := server.New(cfg, logger)
+	if err = server.ListenAndServe(); err != nil {
+		logger.Error(fmt.Sprintf("failed to start server: %s", err))
+		return
 	}
 }
