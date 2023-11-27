@@ -1,4 +1,5 @@
 ## Reverse proxy
+
 ### About the project
 Simple implementation of a configurable reverse proxy
 
@@ -12,10 +13,11 @@ Simple implementation of a configurable reverse proxy
     - [ ] Rate limiting
 
 Others:
-- [ ] Configurable middlware with json/yaml
-- [ ] Hotreloading of config file
+- [x] Configurable middleware with JSON/YAML
+- [x] Hotreloading of config file
 
 ### Config file template
+
 ```yaml
 "first.localhost:8080":
   destination: "127.0.0.1:8081"
@@ -25,6 +27,8 @@ Others:
   destination: "127.0.0.1:8082"
   middleware: []
 ```
+
+For a more complete example, check the following [config](./examples/config.yaml).
 
 ### References
 - [Traefik](https://doc.traefik.io/traefik/)
