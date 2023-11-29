@@ -10,7 +10,7 @@ Simple implementation of a configurable reverse proxy
 - [x] Load Balancing
 - [ ] Middleware
     - [ ] Caching
-    - [ ] Rate limiting
+    - [x] Rate limiting
 
 Others:
 - [x] Configurable middleware with JSON/YAML

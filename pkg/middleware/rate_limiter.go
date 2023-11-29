@@ -14,36 +14,36 @@ type RateLimiterConfig struct {
 	// Starting with a fixed time window of a second for now
 	Rqs uint `json:"rqs"`
 
-	counter map[string]userCount
+	counter map[string]clientCount
 }
 
-type userCount struct {
+type clientCount struct {
 	numRequests uint
 	*sync.Mutex
 }
 
-func (uc *userCount) reset() {
-	uc.Lock()
-	defer uc.Unlock()
-	uc.numRequests = 0
+func (c *clientCount) reset() {
+	c.Lock()
+	defer c.Unlock()
+	c.numRequests = 0
 }
 
-func (uc *userCount) increment() {
-	uc.Lock()
-	defer uc.Unlock()
-	uc.numRequests++
+func (c *clientCount) incr() {
+	c.Lock()
+	defer c.Unlock()
+	c.numRequests++
 }
 
 // FIXME: Context
 func (rl *RateLimiterConfig) Initialize(context context.Context) {
 	go rl.resetter(time.NewTicker(time.Second))
-	rl.counter = make(map[string]userCount)
+	rl.counter = make(map[string]clientCount)
 }
 
 func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userId := readUserIP(r)
-		if rl.exceedes(userId) {
+		userId := readClientIpAddr(r)
+		if rl.clientExceedsLimit(userId) {
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
 		}
@@ -52,7 +52,7 @@ func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (rl *RateLimiterConfig) exceedes(user string) bool {
+func (rl *RateLimiterConfig) clientExceedsLimit(user string) bool {
 	count, ok := rl.counter[user]
 	if !ok {
 		return false
@@ -63,9 +63,9 @@ func (rl *RateLimiterConfig) exceedes(user string) bool {
 	return count.numRequests > rl.Rqs
 }
 
-func (rl *RateLimiterConfig) userCountIncrement(user string) {
+func (rl *RateLimiterConfig) clientCountIncr(user string) {
 	count := rl.counter[user]
-	count.increment()
+	count.incr()
 }
 
 func (rl *RateLimiterConfig) resetter(ticker *time.Ticker) {
@@ -79,13 +79,13 @@ func (rl *RateLimiterConfig) resetter(ticker *time.Ticker) {
 
 // Not related
 // Temporary: From: https://stackoverflow.com/questions/27234861/correct-way-of-getting-clients-ip-addresses-from-http-request
-func readUserIP(r *http.Request) string {
-	IPAddress := r.Header.Get("X-Real-Ip")
-	if IPAddress == "" {
-		IPAddress = r.Header.Get("X-Forwarded-For")
-	}
-	if IPAddress == "" {
-		IPAddress = r.RemoteAddr
-	}
-	return IPAddress
+func readClientIpAddr(r *http.Request) string {
+	// IPAddress := r.Header.Get("X-Real-Ip")
+	// if IPAddress == "" {
+	// 	IPAddress = r.Header.Get("X-Forwarded-For")
+	// }
+	// if IPAddress == "" {
+	// 	IPAddress = r.RemoteAddr
+	// }
+	return r.RemoteAddr
 }
