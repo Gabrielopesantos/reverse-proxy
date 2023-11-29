@@ -1,7 +1,7 @@
 package middleware
 
 // Let's start with a dummy implementation where each counter is reset at the second
-// FIXME: Eventually upgrade implementation
+// FIXME: Eventually upgrade implementation (Working on it)
 
 import (
 	"context"
@@ -10,82 +10,92 @@ import (
 	"time"
 )
 
+const (
+	DEFAULT_MAX_REQUESTS       = 100
+	DEFAULT_TIME_FRAME_SECONDS = 20
+)
+
 type RateLimiterConfig struct {
-	// Starting with a fixed time window of a second for now
-	Rqs uint `json:"rqs"`
+	MaxRequests      uint `json:"max_requests"`
+	TimeFrameSeconds uint `json:"time_frame_seconds"` // Timeframe?
 
-	counter map[string]clientCount
+	counter map[string]*ClientRequestsCounter
 }
 
-type clientCount struct {
-	numRequests uint
-	*sync.Mutex
+type ClientRequestsCounter struct {
+	requests           []int64
+	oldestReqTimestamp uint64
+	sync.Mutex
 }
 
-func (c *clientCount) reset() {
+func NewClientRequestsCounter() *ClientRequestsCounter {
+	return &ClientRequestsCounter{
+		requests: make([]int64, 0),
+	}
+}
+
+func (c *ClientRequestsCounter) incr(requestTimestamp int64) {
 	c.Lock()
 	defer c.Unlock()
-	c.numRequests = 0
+	c.requests = append(c.requests, requestTimestamp)
 }
 
-func (c *clientCount) incr() {
+func (c *ClientRequestsCounter) NumReqsInFrame(requestTime time.Time, timeframe time.Duration) int {
 	c.Lock()
 	defer c.Unlock()
-	c.numRequests++
+	timeFrameStart := requestTime.Add(-timeframe).Unix()
+	var outOfTimeFrame uint64
+	for {
+		if len(c.requests) > int(outOfTimeFrame) && c.requests[outOfTimeFrame] < timeFrameStart {
+			outOfTimeFrame += 1
+		} else {
+			c.requests = c.requests[outOfTimeFrame:]
+			break
+		}
+	}
+
+	return len(c.requests)
 }
 
-// FIXME: Context
 func (rl *RateLimiterConfig) Initialize(context context.Context) {
-	go rl.resetter(time.NewTicker(time.Second))
-	rl.counter = make(map[string]clientCount)
+	if rl.MaxRequests == 0 {
+		rl.MaxRequests = DEFAULT_MAX_REQUESTS
+	}
+	if rl.TimeFrameSeconds == 0 {
+		rl.TimeFrameSeconds = DEFAULT_TIME_FRAME_SECONDS
+	}
+	rl.counter = make(map[string]*ClientRequestsCounter)
 }
 
 func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userId := readClientIpAddr(r)
-		if rl.clientExceedsLimit(userId) {
-			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
-			return
+		requestTime := time.Now()
+		clientAddr := readClientIpAddr(r)
+		clientCounter, insert := rl.counter[clientAddr]
+		if !insert {
+			clientCounter = NewClientRequestsCounter()
+			rl.counter[clientAddr] = clientCounter
+		} else {
+			if clientCounter.NumReqsInFrame(requestTime, time.Duration(rl.TimeFrameSeconds)*time.Second) >= int(rl.MaxRequests) {
+				http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+				return
+			}
 		}
+		clientCounter.incr(requestTime.Unix())
 
 		next.ServeHTTP(w, r)
 	}
 }
 
-func (rl *RateLimiterConfig) clientExceedsLimit(user string) bool {
-	count, ok := rl.counter[user]
-	if !ok {
-		return false
-	}
-	count.Lock()
-	defer count.Unlock()
-
-	return count.numRequests > rl.Rqs
-}
-
-func (rl *RateLimiterConfig) clientCountIncr(user string) {
-	count := rl.counter[user]
-	count.incr()
-}
-
-func (rl *RateLimiterConfig) resetter(ticker *time.Ticker) {
-	// Each counter is going to need a lock
-	for range ticker.C {
-		for _, cc := range rl.counter {
-			cc.reset()
-		}
-	}
-}
-
-// Not related
+// NOTE: Helper function
 // Temporary: From: https://stackoverflow.com/questions/27234861/correct-way-of-getting-clients-ip-addresses-from-http-request
 func readClientIpAddr(r *http.Request) string {
-	// IPAddress := r.Header.Get("X-Real-Ip")
-	// if IPAddress == "" {
-	// 	IPAddress = r.Header.Get("X-Forwarded-For")
-	// }
-	// if IPAddress == "" {
-	// 	IPAddress = r.RemoteAddr
-	// }
-	return r.RemoteAddr
+	IPAddress := r.Header.Get("X-Real-Ip")
+	if IPAddress == "" {
+		IPAddress = r.Header.Get("X-Forwarded-For")
+	}
+	if IPAddress == "" {
+		IPAddress = r.RemoteAddr
+	}
+	return IPAddress
 }

@@ -15,15 +15,18 @@ routes:
         stream: stdout
         mode: dev
       rate_limiter:
-        rqs: 5
+        max_requests: 4
+        time_frame_seconds: 30
 
   /second:
     upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
     middleware:
+      # Order of these configurations is matters
+      rate_limiter:
+        max_requests: 2
+        time_frame_seconds: 60
+      basic_auth:
+        file: ./examples/basic_auth
       logger:
         stream: stdout
         mode: prod
-      rate_limiter:
-        rqs: 1
-      basic_auth:
-        file: ./examples/basic_auth
