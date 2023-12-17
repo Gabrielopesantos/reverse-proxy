@@ -9,11 +9,13 @@ Simple implementation of a configurable reverse proxy
 - [ ] Web Application Firewall
 - [x] Load Balancing
 - [ ] Middleware
-    - [ ] Caching
+    - [ ] Caching - WIP
     - [x] Rate limiting
 
 Others:
-- [x] Configurable middleware with JSON/YAML
+- [x] Configurable middleware with:
+    - [ ] JSON
+    - [x] YAML
 - [x] Hotreloading of config file
 
 ### Config file template
@@ -34,6 +36,7 @@ For a more complete example, check the following [config](./examples/config.yaml
 - [Traefik](https://doc.traefik.io/traefik/)
 - [OpenFaas Watchdog](https://github.com/openfaas/of-watchdog)
 - [Caddy](https://caddyserver.com/)
+- [Reproxy](https://github.com/umputun/reproxy)
 
 ### LICENSE
 MIT

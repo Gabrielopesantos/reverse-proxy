@@ -57,7 +57,7 @@ func (c *ClientRequestsCounter) NumReqsInFrame(requestTime time.Time, timeframe 
 	return len(c.requests)
 }
 
-func (rl *RateLimiterConfig) Initialize(context context.Context) {
+func (rl *RateLimiterConfig) Init(context context.Context) {
 	if rl.MaxRequests == 0 {
 		rl.MaxRequests = DEFAULT_MAX_REQUESTS
 	}

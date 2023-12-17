@@ -12,8 +12,8 @@ routes:
     lb_policy: "round_robin" # "random", "round_robin"
     middleware:
       logger:
-        stream: stdout
-        mode: dev
+        stream: first-route.log
+        mode: text
       rate_limiter:
         max_requests: 4
         time_frame_seconds: 30
@@ -29,4 +29,4 @@ routes:
         file: ./examples/basic_auth
       logger:
         stream: stdout
-        mode: prod
+        mode: text

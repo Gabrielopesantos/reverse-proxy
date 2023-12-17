@@ -13,6 +13,5 @@ const (
 )
 
 type Middleware interface {
-	// FIXME: Not sure about `Exec`
 	Exec(http.HandlerFunc) http.HandlerFunc
 }
