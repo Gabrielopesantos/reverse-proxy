@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 )
 
@@ -13,5 +14,6 @@ const (
 )
 
 type Middleware interface {
+	Init(context.Context) error
 	Exec(http.HandlerFunc) http.HandlerFunc
 }

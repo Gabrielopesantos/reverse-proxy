@@ -1,8 +1,5 @@
 package middleware
 
-// Let's start with a dummy implementation where each counter is reset at the second
-// FIXME: Eventually upgrade implementation (Working on it)
-
 import (
 	"context"
 	"net/http"
@@ -16,55 +13,55 @@ const (
 )
 
 type RateLimiterConfig struct {
-	MaxRequests      uint `json:"max_requests"`
-	TimeFrameSeconds uint `json:"time_frame_seconds"` // Timeframe?
+	MaxReqs       uint `json:"max_requests"`
+	TimeFrameSecs uint `json:"time_frame_seconds"`
 
 	counter map[string]*ClientRequestsCounter
 }
 
 type ClientRequestsCounter struct {
-	requests           []int64
-	oldestReqTimestamp uint64
+	reqsTimestamps []int64
 	sync.Mutex
 }
 
 func NewClientRequestsCounter() *ClientRequestsCounter {
 	return &ClientRequestsCounter{
-		requests: make([]int64, 0),
+		reqsTimestamps: make([]int64, 0),
 	}
 }
 
-func (c *ClientRequestsCounter) incr(requestTimestamp int64) {
+func (c *ClientRequestsCounter) incr(reqTimestamp int64) {
 	c.Lock()
 	defer c.Unlock()
-	c.requests = append(c.requests, requestTimestamp)
+	c.reqsTimestamps = append(c.reqsTimestamps, reqTimestamp)
 }
 
-func (c *ClientRequestsCounter) NumReqsInFrame(requestTime time.Time, timeframe time.Duration) int {
+func (c *ClientRequestsCounter) ReqsInFrame(reqTime time.Time, timeframe time.Duration) int {
 	c.Lock()
 	defer c.Unlock()
-	timeFrameStart := requestTime.Add(-timeframe).Unix()
+	timeFrameStart := reqTime.Add(-timeframe).Unix()
 	var outOfTimeFrame uint64
 	for {
-		if len(c.requests) > int(outOfTimeFrame) && c.requests[outOfTimeFrame] < timeFrameStart {
+		if len(c.reqsTimestamps) > int(outOfTimeFrame) && c.reqsTimestamps[outOfTimeFrame] < timeFrameStart {
 			outOfTimeFrame += 1
 		} else {
-			c.requests = c.requests[outOfTimeFrame:]
+			c.reqsTimestamps = c.reqsTimestamps[outOfTimeFrame:]
 			break
 		}
 	}
 
-	return len(c.requests)
+	return len(c.reqsTimestamps)
 }
 
-func (rl *RateLimiterConfig) Init(context context.Context) {
-	if rl.MaxRequests == 0 {
-		rl.MaxRequests = DEFAULT_MAX_REQUESTS
+func (rl *RateLimiterConfig) Init(ctx context.Context) error {
+	if rl.MaxReqs == 0 {
+		rl.MaxReqs = DEFAULT_MAX_REQUESTS
 	}
-	if rl.TimeFrameSeconds == 0 {
-		rl.TimeFrameSeconds = DEFAULT_TIME_FRAME_SECONDS
+	if rl.TimeFrameSecs == 0 {
+		rl.TimeFrameSecs = DEFAULT_TIME_FRAME_SECONDS
 	}
 	rl.counter = make(map[string]*ClientRequestsCounter)
+	return nil
 }
 
 func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
@@ -76,7 +73,7 @@ func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 			clientCounter = NewClientRequestsCounter()
 			rl.counter[clientAddr] = clientCounter
 		} else {
-			if clientCounter.NumReqsInFrame(requestTime, time.Duration(rl.TimeFrameSeconds)*time.Second) >= int(rl.MaxRequests) {
+			if clientCounter.ReqsInFrame(requestTime, time.Duration(rl.TimeFrameSecs)*time.Second) >= int(rl.MaxReqs) {
 				http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 				return
 			}
@@ -87,8 +84,8 @@ func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// NOTE: Helper function
-// Temporary: From: https://stackoverflow.com/questions/27234861/correct-way-of-getting-clients-ip-addresses-from-http-request
+// NOTE: Temporary helper function
+// From: https://stackoverflow.com/questions/27234861/correct-way-of-getting-clients-ip-addresses-from-http-request
 func readClientIpAddr(r *http.Request) string {
 	IPAddress := r.Header.Get("X-Real-Ip")
 	if IPAddress == "" {

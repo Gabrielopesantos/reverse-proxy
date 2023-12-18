@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"context"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -16,7 +17,7 @@ type BasicAuthConfig struct {
 	encodedAuthRows []string
 }
 
-func (ba *BasicAuthConfig) Init() error {
+func (ba *BasicAuthConfig) Init(ctx context.Context) error {
 	data, err := os.ReadFile(ba.File)
 	if err != nil {
 		return fmt.Errorf("failed to open file with basic auth credentials: %w", err)

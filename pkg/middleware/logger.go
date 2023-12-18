@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+
+	"context"
 )
 
 type StreamType string
@@ -29,7 +31,7 @@ type LoggerConfig struct {
 	logger *slog.Logger
 }
 
-func (l *LoggerConfig) Init() error {
+func (l *LoggerConfig) Init(ctx context.Context) error {
 	var writer io.Writer
 	switch l.Stream {
 	case StreamTypeStdout:

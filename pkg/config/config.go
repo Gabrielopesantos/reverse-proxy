@@ -91,17 +91,18 @@ func parseRoutesMiddleware(config *Config) error {
 				return fmt.Errorf("failed to marshal middleware configuration with type: %s: %w", mwType, err)
 			}
 			switch mwType {
+
 			case middleware.LOGGER:
 				loggerConfig := &middleware.LoggerConfig{}
 				err = json.Unmarshal(enc, loggerConfig)
 				if err != nil {
 					return fmt.Errorf("failed to unmarshal logger middleware configuration enconding: %w", err)
 				}
-				err := loggerConfig.Init()
-				if err != nil {
+				if err := loggerConfig.Init(context.TODO()); err != nil {
 					return err
 				}
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(loggerConfig))
+
 			case middleware.RATE_LIMITER:
 				raterLimiterConfig := &middleware.RateLimiterConfig{}
 				err = json.Unmarshal(enc, raterLimiterConfig)
@@ -110,16 +111,18 @@ func parseRoutesMiddleware(config *Config) error {
 				}
 				raterLimiterConfig.Init(context.TODO())
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(raterLimiterConfig))
+
 			case middleware.BASIC_AUTH:
 				basicAuthConfig := &middleware.BasicAuthConfig{}
 				err = json.Unmarshal(enc, basicAuthConfig)
 				if err != nil {
 					return fmt.Errorf("failed to unmarshal basic auth middleware configuration enconding: %w", err)
 				}
-				if err := basicAuthConfig.Init(); err != nil {
+				if err := basicAuthConfig.Init(context.TODO()); err != nil {
 					return err
 				}
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(basicAuthConfig))
+
 			default:
 				return fmt.Errorf("unknown middleware type: %s", mwType)
 			}
