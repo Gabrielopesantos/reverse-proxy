@@ -12,6 +12,7 @@ const (
 	DEFAULT_TIME_FRAME_SECONDS = 20
 )
 
+// NOTE: Eventually accept string as TimeFrame, e.g. "15m", "1h"
 type RateLimiterConfig struct {
 	MaxReqs       uint `json:"max_requests"`
 	TimeFrameSecs uint `json:"time_frame_seconds"`

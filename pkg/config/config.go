@@ -33,7 +33,7 @@ type Server struct {
 type Route struct {
 	Upstreams          []string                    `yaml:"upstreams"`
 	LoadBalancerPolicy balancer.LoadBalancerPolicy `yaml:"lb_policy"`
-	// FIXME: Currently doesn't seem to be possible to unmarshall directly into a slice of MiddlewareInternalRepr
+	// FIXME: Currently doesn't seem to be possible to unmarshal directly into a slice of MiddlewareInternalRepr
 	MiddlewareInternalRepr map[middleware.MiddlewareType]interface{} `yaml:"middleware"`
 
 	middlewareList []middleware.Middleware `yaml:"middleware"`
@@ -122,6 +122,16 @@ func parseRoutesMiddleware(config *Config) error {
 					return err
 				}
 				routeConfig.middlewareList = append(routeConfig.middlewareList, middleware.Middleware(basicAuthConfig))
+
+			case middleware.CACHE_CONTROL:
+				cacheControlConfig := &middleware.CacheControlConfig{}
+				err = json.Unmarshal(enc, cacheControlConfig)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal cache control middleware configuration encoding: %w", err)
+				}
+				if err = cacheControlConfig.Init(context.TODO()); err != nil {
+					return err
+				}
 
 			default:
 				return fmt.Errorf("unknown middleware type: %s", mwType)
