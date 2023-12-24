@@ -2,9 +2,12 @@ package middleware
 
 import (
 	"context"
+	"crypto/md5"
+	"fmt"
 	"net/http"
-	"sync"
 	"time"
+
+	utils "github.com/gabrielopesantos/reverse-proxy/pkg/utilities"
 )
 
 const (
@@ -14,7 +17,7 @@ const (
 type CacheControlConfig struct {
 	Duration string `json:"duration"`
 
-	cache        sync.Map
+	cache        *utils.SizeLimitedCache
 	durationTime time.Duration
 }
 
@@ -30,14 +33,25 @@ func (cc *CacheControlConfig) Init(ctx context.Context) error {
 		return err
 	}
 	cc.durationTime = timeDuration
-	cc.cache = sync.Map{}
+	// NOTE: Size still doesn't have any meaning
+	cc.cache = utils.NewSizeLimitedCache(200)
 
 	return nil
 }
 
 func (cc *CacheControlConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// cacheControlHeaderValue := r.Header.Get("Cache-Control")
-		next.ServeHTTP(w, r)
+		cacheControlHeaderValue := r.Header.Get("Cache-Control")
+		if cacheControlHeaderValue == "no-cache" {
+			next.ServeHTTP(w, r)
+		}
+
+		// Check for cached value
+		cacheResponseKey := buildCacheKey(r)
 	}
+}
+
+func buildCacheKey(r *http.Request) [16]byte {
+	unhashedKey := []byte(fmt.Sprintf("%s-%s-%s", r.Host, r.Method, r.URL.Path))
+	return md5.Sum(unhashedKey)
 }
