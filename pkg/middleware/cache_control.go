@@ -47,7 +47,8 @@ func (cc *CacheControlConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Check for cached value
-		cacheResponseKey := buildCacheKey(r)
+		// cacheResponseKey := buildCacheKey(r)
+		// cc.cache.GetResponse(cacheResponseKey)
 	}
 }
 

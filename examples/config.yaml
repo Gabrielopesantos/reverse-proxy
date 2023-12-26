@@ -10,8 +10,7 @@ routes:
       - "http://localhost:8082"
       - "http://localhost:8084"
     lb_policy: "round_robin" # "random", "round_robin"
-    middleware:
-      # Order of these configurations is matters
+    middleware: # Order of these configurations matters. But should it matter?
       logger:
         stream: first-route.log
         mode: text
@@ -22,8 +21,6 @@ routes:
   /second:
     upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
     middleware:
-      # Order of these configurations is matters
-      # But should it matter?
       rate_limiter:
         max_requests: 2
         time_frame_seconds: 60  # Eventually support time as string, e.g. 2d

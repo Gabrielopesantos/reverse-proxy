@@ -9,7 +9,7 @@ Simple implementation of a configurable reverse proxy
 - [ ] Web Application Firewall
 - [x] Load Balancing
 - [ ] Middleware
-    - [ ] Caching - WIP
+    - [ ] Caching
     - [x] Rate limiting
 
 Others:
