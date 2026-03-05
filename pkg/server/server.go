@@ -7,36 +7,59 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/proxy"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// atomicMuxHandler wraps an http.ServeMux behind an atomic pointer so the
+// active router can be swapped without downtime during config hot-reload.
+type atomicMuxHandler struct {
+	mux atomic.Pointer[http.ServeMux]
+}
+
+func (a *atomicMuxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mux.Load().ServeHTTP(w, r)
+}
+
 type Server struct {
-	server http.Server
-	config *config.Config
-	logger *slog.Logger
+	server  http.Server
+	config  *config.Config
+	logger  *slog.Logger
+	handler *atomicMuxHandler
 }
 
 func New(config *config.Config, logger *slog.Logger) *Server {
-	return &Server{
-		server: http.Server{
-			Addr:        config.Server.Address,
-			ReadTimeout: time.Duration(config.Server.ReadTimeoutSeconds) * time.Second,
-		},
-		config: config,
-		logger: logger,
+	s := &Server{
+		config:  config,
+		logger:  logger,
+		handler: &atomicMuxHandler{},
 	}
+	s.server = http.Server{
+		Addr:        config.Server.Address,
+		ReadTimeout: time.Duration(config.Server.ReadTimeoutSeconds) * time.Second,
+		Handler:     s.handler,
+	}
+	return s
 }
 
 func (s *Server) ListenAndServe() error {
-	err := s.mapProxyRoutes()
-	if err != nil {
+	if err := s.reloadRoutes(); err != nil {
 		s.logger.Error(fmt.Sprintf("error while mapping proxy routes: %s", err))
 		return err
 	}
+
+	// Re-map routes on every successful config reload.
+	s.config.OnReload(func() {
+		if err := s.reloadRoutes(); err != nil {
+			s.logger.Error(fmt.Sprintf("error remapping routes after config reload: %s", err))
+		}
+	})
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	go func(quitChannel chan os.Signal) {
@@ -46,25 +69,34 @@ func (s *Server) ListenAndServe() error {
 			quitChannel <- os.Interrupt
 		}
 	}(quit)
-	// TODO: Healthcheck endpoint for server
 
 	<-quit
 	ctx, shutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdown()
 
-	s.logger.Info("Server gracefully exited properly")
+	s.logger.Info("Server gracefully exited")
 	return s.server.Shutdown(ctx)
 }
 
-func (s *Server) mapProxyRoutes() error {
+func (s *Server) reloadRoutes() error {
 	router := http.NewServeMux()
+
+	// Health and metrics endpoints.
+	router.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	router.Handle("/metrics", promhttp.Handler())
+
+	s.config.RLock()
+	defer s.config.RUnlock()
+
 	for routePathPattern, routeConfig := range s.config.Routes {
 		rProxy, err := proxy.New(routeConfig)
 		if err != nil {
 			return err
 		}
 
-		// Set middleware
 		handler := http.HandlerFunc(rProxy.ServeHTTP)
 		for i := len(routeConfig.Middleware()) - 1; i >= 0; i-- {
 			handler = routeConfig.Middleware()[i].Exec(handler.ServeHTTP)
@@ -73,7 +105,7 @@ func (s *Server) mapProxyRoutes() error {
 		router.Handle(routePathPattern, handler)
 		s.logger.Info(fmt.Sprintf("Handler set for route %s", routePathPattern))
 	}
-	s.server.Handler = router
 
+	s.handler.mux.Store(router)
 	return nil
 }
