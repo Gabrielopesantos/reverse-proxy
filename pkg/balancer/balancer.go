@@ -16,7 +16,7 @@ type LoadBalancerPolicy string
 
 const (
 	RANDOM      LoadBalancerPolicy = "random"
-	ROUND_ROBIN                    = "round_robin"
+	ROUND_ROBIN LoadBalancerPolicy = "round_robin"
 )
 
 // A Balancer selects which target host is going to be consumed based on the
@@ -123,11 +123,9 @@ func (rr *RoundRobinBalancer) Balance() (string, error) {
 	}
 }
 
+// incrementCurrentHostIndex advances the round-robin pointer.
+// Must be called with BaseBalancer.Lock already held.
 func (rr *RoundRobinBalancer) incrementCurrentHostIndex() {
-	// NOTE: Having this seems to be breaking the RoundRobinBalancer Balance method
-	// rr.BaseBalancer.Lock()
-	// defer rr.BaseBalancer.Unlock()
-
 	rr.currentHostIndex += 1
 	rr.currentHostIndex %= len(rr.hosts)
 }
