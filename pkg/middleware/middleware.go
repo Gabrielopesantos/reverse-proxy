@@ -8,11 +8,11 @@ import (
 type MiddlewareType string
 
 const (
-	LOGGER      MiddlewareType = "logger"
-	RATE_LIMITER MiddlewareType = "rate_limiter"
-	BASIC_AUTH  MiddlewareType = "basic_auth"
+	LOGGER        MiddlewareType = "logger"
+	RATE_LIMITER  MiddlewareType = "rate_limiter"
+	BASIC_AUTH    MiddlewareType = "basic_auth"
 	CACHE_CONTROL MiddlewareType = "cache_control"
-	PROMETHEUS  MiddlewareType = "prometheus"
+	PROMETHEUS    MiddlewareType = "prometheus"
 )
 
 type Middleware interface {

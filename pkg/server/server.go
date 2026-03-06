@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -27,10 +28,12 @@ func (a *atomicMuxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type Server struct {
-	server  http.Server
-	config  *config.Config
-	logger  *slog.Logger
-	handler *atomicMuxHandler
+	server        http.Server
+	config        *config.Config
+	logger        *slog.Logger
+	handler       *atomicMuxHandler
+	activeProxies []*proxy.Proxy
+	proxiesMu     sync.Mutex
 }
 
 func New(config *config.Config, logger *slog.Logger) *Server {
@@ -74,8 +77,11 @@ func (s *Server) ListenAndServe() error {
 	ctx, shutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdown()
 
-	s.logger.Info("Server gracefully exited")
-	return s.server.Shutdown(ctx)
+	err := s.server.Shutdown(ctx)
+	if err == nil {
+		s.logger.Info("Server gracefully exited")
+	}
+	return err
 }
 
 func (s *Server) reloadRoutes() error {
@@ -91,11 +97,13 @@ func (s *Server) reloadRoutes() error {
 	s.config.RLock()
 	defer s.config.RUnlock()
 
+	var newProxies []*proxy.Proxy
 	for routePathPattern, routeConfig := range s.config.Routes {
-		rProxy, err := proxy.New(routeConfig)
+		rProxy, err := proxy.New(routeConfig, s.logger)
 		if err != nil {
 			return err
 		}
+		newProxies = append(newProxies, rProxy)
 
 		handler := http.HandlerFunc(rProxy.ServeHTTP)
 		for i := len(routeConfig.Middleware()) - 1; i >= 0; i-- {
@@ -107,5 +115,15 @@ func (s *Server) reloadRoutes() error {
 	}
 
 	s.handler.mux.Store(router)
+
+	s.proxiesMu.Lock()
+	old := s.activeProxies
+	s.activeProxies = newProxies
+	s.proxiesMu.Unlock()
+
+	for _, p := range old {
+		p.Stop()
+	}
+
 	return nil
 }

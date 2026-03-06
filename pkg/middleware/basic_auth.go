@@ -1,13 +1,13 @@
 package middleware
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
-	"context"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -23,17 +23,9 @@ func (ba *BasicAuthConfig) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to open file with basic auth credentials: %w", err)
 	}
 
-	authRows := strings.Split(string(data), "\n")
-	if len(authRows) == 0 {
-		return fmt.Errorf("credentials not found: %w", err)
-	}
-	ba.encodedAuthRows = authRows
+	ba.encodedAuthRows = strings.Split(string(data), "\n")
 
 	return nil
-}
-
-func (ba *BasicAuthConfig) isAuthorized() bool {
-	return true
 }
 
 func (ba *BasicAuthConfig) Exec(next http.HandlerFunc) http.HandlerFunc {

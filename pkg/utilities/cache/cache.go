@@ -1,4 +1,4 @@
-package utilities
+package cache
 
 import (
 	"container/list"
@@ -19,7 +19,7 @@ func (cr *CachedResponse) IsExpired() bool {
 	return time.Now().After(cr.ExpiresAt)
 }
 
-type cacheEntry struct {
+type Entry struct {
 	key   [16]byte
 	value *CachedResponse
 }
@@ -47,7 +47,7 @@ func (c *SizeLimitedCache) CacheResponse(key [16]byte, resp *CachedResponse) {
 
 	if elem, ok := c.items[key]; ok {
 		c.lru.MoveToFront(elem)
-		elem.Value.(*cacheEntry).value = resp
+		elem.Value.(*Entry).value = resp
 		return
 	}
 
@@ -55,7 +55,7 @@ func (c *SizeLimitedCache) CacheResponse(key [16]byte, resp *CachedResponse) {
 		c.evictOldest()
 	}
 
-	elem := c.lru.PushFront(&cacheEntry{key: key, value: resp})
+	elem := c.lru.PushFront(&Entry{key: key, value: resp})
 	c.items[key] = elem
 }
 
@@ -68,7 +68,7 @@ func (c *SizeLimitedCache) GetResponse(key [16]byte) *CachedResponse {
 	if !ok {
 		return nil
 	}
-	entry := elem.Value.(*cacheEntry)
+	entry := elem.Value.(*Entry)
 	if entry.value.IsExpired() {
 		c.removeElement(elem)
 		return nil
@@ -96,5 +96,5 @@ func (c *SizeLimitedCache) evictOldest() {
 
 func (c *SizeLimitedCache) removeElement(elem *list.Element) {
 	c.lru.Remove(elem)
-	delete(c.items, elem.Value.(*cacheEntry).key)
+	delete(c.items, elem.Value.(*Entry).key)
 }

@@ -23,6 +23,7 @@ type Config struct {
 	Routes map[string]*Route `yaml:"routes"`
 	sync.RWMutex
 
+	configPath      string
 	reloadCallbacks []func()
 }
 
@@ -53,7 +54,7 @@ func (c *Config) OnReload(fn func()) {
 }
 
 func LoadConfig(configPath string) (*Config, error) {
-	config := &Config{}
+	config := &Config{configPath: configPath}
 	err := readConfig(config)
 	if err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func readConfig(config *Config) error {
 	config.Lock()
 	defer config.Unlock()
 
-	configFileContent, err := os.ReadFile(DefaultPath)
+	configFileContent, err := os.ReadFile(config.configPath)
 	if err != nil {
 		return err
 	}

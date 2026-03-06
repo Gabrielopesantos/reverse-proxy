@@ -1,8 +1,9 @@
 package utilities
 
 import (
-	"golang.org/x/exp/maps"
 	"sync"
+
+	"golang.org/x/exp/maps"
 )
 
 type void struct{}
@@ -53,5 +54,7 @@ func (s *Set[T]) Len() int {
 }
 
 func (s *Set[T]) Clear() {
+	s.Mutex.Lock()
+	defer s.Mutex.Unlock()
 	maps.Clear(s.items)
 }

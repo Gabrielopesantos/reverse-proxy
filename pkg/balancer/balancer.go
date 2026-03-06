@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	NoHostError = errors.New("no healthy upstream host found")
+	ErrNoHost = errors.New("no healthy upstream host found")
 )
 
 type LoadBalancerPolicy string
@@ -73,6 +73,10 @@ func (r *RandomBalancer) Balance() (string, error) {
 	r.BaseBalancer.Lock()
 	defer r.BaseBalancer.Unlock()
 
+	if len(r.hosts) == 0 {
+		return "", ErrNoHost
+	}
+
 	hostsChecked := utilities.NewSet[string]()
 	for {
 		randHostIndex := rand.Intn(len(r.hosts))
@@ -83,7 +87,7 @@ func (r *RandomBalancer) Balance() (string, error) {
 
 		hostsChecked.Add(host)
 		if hostsChecked.Len() == len(r.hosts) {
-			return "", NoHostError
+			return "", ErrNoHost
 		}
 	}
 }
@@ -98,7 +102,6 @@ func NewRoundRobinBalancer(hosts map[string]bool) Balancer {
 		BaseBalancer:     newBaseBalancer(hosts),
 		currentHostIndex: 0,
 	}
-	balancer.setHostToIndex()
 
 	return balancer
 }
@@ -107,13 +110,17 @@ func (rr *RoundRobinBalancer) Balance() (string, error) {
 	rr.BaseBalancer.Lock()
 	defer rr.BaseBalancer.Unlock()
 
+	if len(rr.hosts) == 0 {
+		return "", ErrNoHost
+	}
+
 	hostsChecked := utilities.NewSet[string]()
 	for {
 		host := rr.indexToHost[uint(rr.currentHostIndex)]
 		if healthy := rr.hosts[host]; !healthy {
 			hostsChecked.Add(host)
 			if hostsChecked.Len() == len(rr.hosts) {
-				return "", NoHostError
+				return "", ErrNoHost
 			}
 			rr.incrementCurrentHostIndex()
 			continue

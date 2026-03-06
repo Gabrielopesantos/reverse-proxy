@@ -1,9 +1,3 @@
-/*
-Source: https://stackoverflow.com/questions/53272536/how-do-i-get-response-statuscode-in-golang-middleware
-This implementation has some issues as `loggingResponseWriter` doesn't implement
-multiple interfaces (`CloseNotifier`, Flusher`, etc) that might be used.
-Better example: https://github.com/urfave/negroni/blob/master/response_writer.go
-*/
 package middleware
 
 import (
@@ -18,6 +12,7 @@ type loggingResponseWriter struct {
 func NewLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
 	return &loggingResponseWriter{
 		ResponseWriter: w,
+		statusCode:     http.StatusOK,
 	}
 }
 

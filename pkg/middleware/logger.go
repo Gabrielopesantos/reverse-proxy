@@ -1,13 +1,12 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
-
-	"context"
 )
 
 type StreamType string
@@ -29,6 +28,7 @@ type LoggerConfig struct {
 	Stream StreamType `json:"stream"`
 	Mode   LoggerMode `json:"mode"`
 	logger *slog.Logger
+	file   *os.File
 }
 
 func (l *LoggerConfig) Init(ctx context.Context) error {
@@ -39,14 +39,14 @@ func (l *LoggerConfig) Init(ctx context.Context) error {
 	case StreamTypeStderr:
 		writer = os.Stderr
 	default:
+		if l.file != nil {
+			_ = l.file.Close()
+		}
 		file, err := os.OpenFile(string(l.Stream), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			return err
 		}
-		// NOTE: Has to be closed when the program is finished;
-		// defer file.Close()
-		// NOTE: Multiwriter?
-		// wrt := io.MultiWriter(os.Stdout, file)
+		l.file = file
 		writer = file
 	}
 

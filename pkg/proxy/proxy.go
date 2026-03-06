@@ -3,12 +3,11 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
@@ -19,30 +18,38 @@ import (
 const defaultHealthCheckInterval = 5 * time.Second
 
 type Proxy struct {
-	sync.RWMutex
-	hosts       map[string]*httputil.ReverseProxy
-	hostsHealth map[string]bool
-	lb          balancer.Balancer
-	hcInterval  time.Duration
+	hosts      map[string]*httputil.ReverseProxy
+	lb         balancer.Balancer
+	hcInterval time.Duration
+	logger     *slog.Logger
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
-func New(cfg *config.Route) (*Proxy, error) {
-	p := &Proxy{}
+func New(cfg *config.Route, logger *slog.Logger) (*Proxy, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &Proxy{
+		logger: logger,
+		ctx:    ctx,
+		cancel: cancel,
+	}
 	hosts := make(map[string]*httputil.ReverseProxy)
 	hostsHealth := make(map[string]bool)
 	for _, host := range cfg.Upstreams {
 		if host == "" {
+			cancel()
 			return nil, fmt.Errorf("invalid empty upstream host in route")
 		}
 		upstreamURL, err := url.Parse(host)
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("failed to parse upstream url '%s': %w", host, err)
 		}
 		rProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
 
-		originDirector := rProxy.Director
-		rProxy.Director = func(req *http.Request) {
-			originDirector(req)
+		originRewrite := rProxy.Rewrite
+		rProxy.Rewrite = func(req *httputil.ProxyRequest) {
+			originRewrite(req)
 			injectForwardedHeaders(req)
 		}
 		hostsHealth[host] = false
@@ -50,8 +57,7 @@ func New(cfg *config.Route) (*Proxy, error) {
 	}
 
 	p.hosts = hosts
-	p.hostsHealth = hostsHealth
-	p.lb = getLoadBalancer(cfg.LoadBalancerPolicy)(p.hostsHealth)
+	p.lb = getLoadBalancer(cfg.LoadBalancerPolicy)(hostsHealth)
 
 	if cfg.HealthCheckIntervalSeconds > 0 {
 		p.hcInterval = time.Duration(cfg.HealthCheckIntervalSeconds) * time.Second
@@ -59,24 +65,27 @@ func New(cfg *config.Route) (*Proxy, error) {
 		p.hcInterval = defaultHealthCheckInterval
 	}
 
-	go p.monitorUpstreamHostsHealth(context.TODO())
+	p.monitorUpstreamHostsHealth()
 
 	return p, nil
+}
+
+func (p *Proxy) Stop() {
+	p.cancel()
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, err := p.lb.Balance()
 	if err != nil {
-		log.Printf("no healthy upstream available for %s: %v", r.URL.Path, err)
+		p.logger.Error("no healthy upstream available", "path", r.URL.Path, "err", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	log.Printf("Host returned: %s", host)
 	p.hosts[host].ServeHTTP(w, r)
 }
 
-func (p *Proxy) monitorUpstreamHostsHealth(ctx context.Context) {
+func (p *Proxy) monitorUpstreamHostsHealth() {
 	for host := range p.hosts {
 		go p.healthCheck(host)
 	}
@@ -84,29 +93,26 @@ func (p *Proxy) monitorUpstreamHostsHealth(ctx context.Context) {
 
 func (p *Proxy) healthCheck(hostAddr string) {
 	ticker := time.NewTicker(p.hcInterval)
-
-	for range ticker.C {
-		if isAlive(hostAddr) {
-			if !p.markedAsHealthy(hostAddr) {
-				log.Printf("successfully reached upstream host '%s', marking as healthy", hostAddr)
+	defer ticker.Stop()
+	wasHealthy := false
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-ticker.C:
+			alive := isAlive(hostAddr)
+			if alive && !wasHealthy {
 				p.lb.SetHealthStatus(hostAddr, true)
 				metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(1)
-			}
-		} else {
-			if p.markedAsHealthy(hostAddr) {
+				p.logger.Info("upstream healthy", "host", hostAddr)
+			} else if !alive && wasHealthy {
 				p.lb.SetHealthStatus(hostAddr, false)
 				metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(0)
-				log.Printf("could not reach upstream host '%s', marking as unhealthy", hostAddr)
+				p.logger.Warn("upstream unhealthy", "host", hostAddr)
 			}
+			wasHealthy = alive
 		}
 	}
-}
-
-func (p *Proxy) markedAsHealthy(host string) bool {
-	p.Lock()
-	defer p.Unlock()
-
-	return p.hostsHealth[host]
 }
 
 func getLoadBalancer(policy balancer.LoadBalancerPolicy) func(map[string]bool) balancer.Balancer {
@@ -122,27 +128,27 @@ func getLoadBalancer(policy balancer.LoadBalancerPolicy) func(map[string]bool) b
 
 // injectForwardedHeaders sets X-Forwarded-For, X-Real-IP, and X-Forwarded-Proto
 // on the outbound request so upstreams can identify the original client.
-func injectForwardedHeaders(req *http.Request) {
-	clientIP, _, err := net.SplitHostPort(req.RemoteAddr)
+func injectForwardedHeaders(proxyReq *httputil.ProxyRequest) {
+	clientIP, _, err := net.SplitHostPort(proxyReq.In.RemoteAddr)
 	if err != nil {
-		clientIP = req.RemoteAddr
+		clientIP = proxyReq.In.RemoteAddr
 	}
 
-	if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
-		req.Header.Set("X-Forwarded-For", prior+", "+clientIP)
+	if prior := proxyReq.In.Header.Get("X-Forwarded-For"); prior != "" {
+		proxyReq.In.Header.Set("X-Forwarded-For", prior+", "+clientIP)
 	} else {
-		req.Header.Set("X-Forwarded-For", clientIP)
+		proxyReq.In.Header.Set("X-Forwarded-For", clientIP)
 	}
 
-	if req.Header.Get("X-Real-IP") == "" {
-		req.Header.Set("X-Real-IP", clientIP)
+	if proxyReq.In.Header.Get("X-Real-IP") == "" {
+		proxyReq.In.Header.Set("X-Real-IP", clientIP)
 	}
 
 	scheme := "http"
-	if req.TLS != nil {
+	if proxyReq.In.TLS != nil {
 		scheme = "https"
 	}
-	req.Header.Set("X-Forwarded-Proto", scheme)
+	proxyReq.In.Header.Set("X-Forwarded-Proto", scheme)
 }
 
 // isAlive checks if a TCP connection can be established to the given URL's host.

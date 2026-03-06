@@ -10,15 +10,16 @@ import (
 	"strings"
 	"time"
 
-	utils "github.com/gabrielopesantos/reverse-proxy/pkg/utilities"
+	utils "github.com/gabrielopesantos/reverse-proxy/pkg/utilities/cache"
 )
 
 type CacheControlConfig struct {
-	Duration string `json:"duration"`
-	MaxItems uint   `json:"max_items"`
-
-	cache        *utils.SizeLimitedCache
+	Duration     string `json:"duration"`
 	durationTime time.Duration
+
+	MaxItems uint `json:"max_items"`
+
+	cache *utils.SizeLimitedCache
 }
 
 func (cc *CacheControlConfig) Init(ctx context.Context) error {
@@ -152,6 +153,6 @@ func parseCacheControlHeader(header string) cacheControlDirectives {
 }
 
 func buildCacheKey(r *http.Request) [16]byte {
-	unhashedKey := fmt.Appendf([]byte("%s-%s-%s"), r.Host, r.Method, r.URL.Path)
-	return md5.Sum(unhashedKey)
+	key := fmt.Appendf(nil, "%s-%s-%s?%s", r.Host, r.Method, r.URL.Path, r.URL.RawQuery)
+	return md5.Sum(key)
 }

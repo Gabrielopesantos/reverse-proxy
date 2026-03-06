@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -12,12 +13,12 @@ const (
 	DEFAULT_TIME_FRAME_SECONDS = 20
 )
 
-// NOTE: Eventually accept string as TimeFrame, e.g. "15m", "1h"
 type RateLimiterConfig struct {
 	MaxReqs       uint `json:"max_requests"`
 	TimeFrameSecs uint `json:"time_frame_seconds"`
 
-	counter map[string]*ClientRequestsCounter
+	counter     map[string]*ClientRequestsCounter
+	counterLock sync.RWMutex
 }
 
 type ClientRequestsCounter struct {
@@ -68,11 +69,19 @@ func (rl *RateLimiterConfig) Init(ctx context.Context) error {
 func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		requestTime := time.Now()
-		clientAddr := readClientIpAddr(r)
-		clientCounter, insert := rl.counter[clientAddr]
-		if !insert {
-			clientCounter = NewClientRequestsCounter()
-			rl.counter[clientAddr] = clientCounter
+		clientAddr := clientIP(r)
+
+		rl.counterLock.RLock()
+		clientCounter, exists := rl.counter[clientAddr]
+		rl.counterLock.RUnlock()
+
+		if !exists {
+			rl.counterLock.Lock()
+			if clientCounter, exists = rl.counter[clientAddr]; !exists {
+				clientCounter = NewClientRequestsCounter()
+				rl.counter[clientAddr] = clientCounter
+			}
+			rl.counterLock.Unlock()
 		} else {
 			if clientCounter.ReqsInFrame(requestTime, time.Duration(rl.TimeFrameSecs)*time.Second) >= int(rl.MaxReqs) {
 				http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
@@ -85,15 +94,10 @@ func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// NOTE: Temporary helper function
-// From: https://stackoverflow.com/questions/27234861/correct-way-of-getting-clients-ip-addresses-from-http-request
-func readClientIpAddr(r *http.Request) string {
-	IPAddress := r.Header.Get("X-Real-Ip")
-	if IPAddress == "" {
-		IPAddress = r.Header.Get("X-Forwarded-For")
+func clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
-	if IPAddress == "" {
-		IPAddress = r.RemoteAddr
-	}
-	return IPAddress
+	return ip
 }
