@@ -39,19 +39,25 @@ func WithLogger(l *slog.Logger) Option {
 	return func(s *Server) { s.logger = l }
 }
 
+func WithAddress(addr string) Option {
+	return func(s *Server) { s.server.Addr = addr }
+}
+
+func WithReadTimeout(timeout time.Duration) Option {
+	return func(s *Server) { s.server.ReadTimeout = timeout }
+}
+
 func New(cfg *config.Config, opts ...Option) *Server {
 	s := &Server{
 		config:  cfg,
 		logger:  slog.Default(),
 		handler: &muxHandler{},
 	}
+	s.server = http.Server{
+		Handler: s.handler,
+	}
 	for _, opt := range opts {
 		opt(s)
-	}
-	s.server = http.Server{
-		Addr:        cfg.ServerConfig.Address,
-		ReadTimeout: time.Duration(cfg.ServerConfig.ReadTimeoutSeconds) * time.Second,
-		Handler:     s.handler,
 	}
 	return s
 }
@@ -71,7 +77,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		s.logger.Info("server listening", "addr", s.config.ServerConfig.Address)
+		s.logger.Info("server listening", "addr", s.server.Addr)
 		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
 			errCh <- err
 		}

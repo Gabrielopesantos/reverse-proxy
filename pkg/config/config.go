@@ -19,9 +19,8 @@ const (
 )
 
 type Config struct {
-	ServerConfig `yaml:"server"`
-	Routes       map[string]*Route `yaml:"routes"`
-	mu           sync.RWMutex
+	Routes map[string]*Route `yaml:"routes"`
+	mu     sync.RWMutex
 
 	configPath      string
 	watchInterval   time.Duration
@@ -33,11 +32,6 @@ type Option func(*Config)
 
 func WithWatchInterval(d time.Duration) Option {
 	return func(c *Config) { c.watchInterval = d }
-}
-
-type ServerConfig struct {
-	Address            string `yaml:"address"`
-	ReadTimeoutSeconds uint   `yaml:"read_timeout"`
 }
 
 type Route struct {
@@ -78,7 +72,7 @@ func (c *Config) OnReload(fn func()) {
 	c.reloadCallbacks = append(c.reloadCallbacks, fn)
 }
 
-func LoadConfig(configPath string, opts ...Option) (*Config, error) {
+func LoadConfig(ctx context.Context, logger *slog.Logger, configPath string, opts ...Option) (*Config, error) {
 	cfg := &Config{
 		configPath:    configPath,
 		watchInterval: 5 * time.Second,
@@ -86,8 +80,7 @@ func LoadConfig(configPath string, opts ...Option) (*Config, error) {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	// TODO: Wire ctx and logger...
-	if err := readConfigFile(context.Background(), slog.Default(), cfg); err != nil {
+	if err := readConfigFile(ctx, logger, cfg); err != nil {
 		return nil, err
 	}
 

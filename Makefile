@@ -6,3 +6,9 @@ run:
 fmt:
 	@echo "+ $@"
 	@gofmt -l -w $(shell find . -type f -name '*.go' -not -path "./vendor/*")
+
+
+.PHONY:
+lint:
+	@echo "+ $@"
+	@golangci-lint run

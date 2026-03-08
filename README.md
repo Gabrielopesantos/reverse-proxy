@@ -6,7 +6,7 @@ Simple implementation of a configurable reverse proxy written in Go.
 
 **Routing**
 - Path-prefix routing with multiple upstreams per route
-- Hot-reload of config file every 5 seconds (configurable) - atomic swap, zero downtime; watcher respects the root context and stops cleanly on shutdown
+- Hot-reload of runtime config file every 5 seconds (bootstrap-configurable) with atomic swap and zero downtime
 
 **Load balancing**
 - `random` (default), `round_robin`, `weighted_round_robin`, `least_connections`, `ip_hash`
@@ -37,13 +37,53 @@ Simple implementation of a configurable reverse proxy written in Go.
 
 ---
 
-### Configuration reference
+## Configuration model
+
+This project uses **two configuration lifecycles**:
+
+1. **Bootstrap config (restart required)**  
+   Process wiring and startup behavior. Changes require restarting the process.
+
+2. **Runtime config (hot-reloadable YAML)**  
+   Routing and middleware behavior loaded from `examples/config.yaml` (or configured path). Changes are applied without restart.
+
+### Restart-required (bootstrap) settings
+
+These should be provided via CLI flags / env vars (recommended) and are **not** part of runtime route YAML:
+
+- Runtime config file path (default: `examples/config.yaml`)
+- Runtime config reload interval (default: `5s`)
+- Server listen address (default: `:8080`)
+- Server read timeout (default: `10s`)
+- Global logger level (`debug|info|warn|error`)
+- Global logger format (`text|json`)
+- Global logger output (`stdout|stderr|/path/to/file`)
+- Global logger color (`auto|true|false`)
+
+Suggested env vars:
+- `RP_CONFIG_PATH`
+- `RP_CONFIG_RELOAD_INTERVAL`
+- `RP_LISTEN_ADDR`
+- `RP_LOG_LEVEL`
+- `RP_LOG_FORMAT`
+- `RP_LOG_OUTPUT`
+- `RP_LOG_COLOR`
+
+
+### Hot-reloadable (runtime YAML) settings
+
+These should be provided via the YAML runtime config:
+
+- `routes`
+- route upstreams / balancer strategy / weights
+- route health-check settings
+- per-route middleware list and middleware-specific fields
+
+---
+
+## Runtime YAML reference
 
 ```yaml
-server:
-  address: :8080
-  read_timeout: 10 # seconds
-
 routes:
   /api:
     upstreams:
@@ -54,6 +94,7 @@ routes:
       "http://localhost:8081": 3
       "http://localhost:8082": 1
     healthcheck_interval_seconds: 5 # default: 5
+    healthcheck_path: / # optional, defaults to "/"
     middleware:
       - logger:
           stream: stdout # "stdout" | "stderr" | file path
@@ -61,6 +102,9 @@ routes:
       - rate_limiter:
           max_requests: 100
           time_frame_seconds: 60
+          stale_client_ttl_seconds: 300
+          trust_proxy_headers: false
+          proxy_header_max_forwards: 5
       - basic_auth:
           file: ./examples/basic_auth # lines: "user:bcrypt_hash"
       - cache_control:
@@ -80,7 +124,9 @@ routes:
 
 For a working example see [`examples/config.yaml`](./examples/config.yaml).
 
-#### Middleware fields
+---
+
+### Middleware fields
 
 | Middleware | Field | Description |
 |------------|-------|-------------|
@@ -88,6 +134,9 @@ For a working example see [`examples/config.yaml`](./examples/config.yaml).
 | `logger` | `mode` | `text` or `json` |
 | `rate_limiter` | `max_requests` | Maximum requests allowed in the window |
 | `rate_limiter` | `time_frame_seconds` | Sliding window size in seconds |
+| `rate_limiter` | `stale_client_ttl_seconds` | Eviction TTL for inactive client buckets |
+| `rate_limiter` | `trust_proxy_headers` | If `true`, derive client IP from `X-Forwarded-For`/`X-Real-IP` |
+| `rate_limiter` | `proxy_header_max_forwards` | Max XFF entries to inspect |
 | `basic_auth` | `file` | Path to credentials file (`user:bcrypt_hash` per line) |
 | `cache_control` | `duration` | Response TTL as a Go duration string (e.g. `30s`, `5m`) |
 | `cache_control` | `max_items` | Maximum number of cached responses (LRU eviction) |
@@ -121,7 +170,7 @@ For a working example see [`examples/config.yaml`](./examples/config.yaml).
 ### Running
 
 ```bash
-make run        # go run ./... using examples/config.yaml
+make run        # go run ./... using configured bootstrap/runtime settings
 make fmt        # gofmt all Go files
 go test ./...
 go test -race ./...
