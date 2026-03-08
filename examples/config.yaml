@@ -56,3 +56,11 @@ routes:
       - logger:
           stream: stdout
           mode: text
+      # - waf:
+      #     mode: block           # "block" (default) | "log"
+      #     rules:                # omit to enable all; or list a subset:
+      #       - sql_injection
+      #       - xss
+      #       - path_traversal
+      #       - command_injection
+      #     max_body_bytes: 65536 # bytes of request body to inspect

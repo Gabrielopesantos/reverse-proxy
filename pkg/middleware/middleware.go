@@ -13,6 +13,7 @@ const (
 	BASIC_AUTH    MiddlewareType = "basic_auth"
 	CACHE_CONTROL MiddlewareType = "cache_control"
 	PROMETHEUS    MiddlewareType = "prometheus"
+	WAF           MiddlewareType = "waf"
 )
 
 type Middleware interface {

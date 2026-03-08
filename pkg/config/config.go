@@ -157,6 +157,16 @@ var middlewareRegistry = map[middleware.MiddlewareType]middlewareFactory{
 		}
 		return cfg, nil
 	},
+	middleware.WAF: func(enc []byte) (middleware.Middleware, error) {
+		cfg := &middleware.WAFConfig{}
+		if err := json.Unmarshal(enc, cfg); err != nil {
+			return nil, err
+		}
+		if err := cfg.Init(context.TODO()); err != nil {
+			return nil, err
+		}
+		return cfg, nil
+	},
 }
 
 func parseRoutesMiddleware(config *Config) error {
