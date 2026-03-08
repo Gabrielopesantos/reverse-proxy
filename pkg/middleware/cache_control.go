@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,15 +15,17 @@ import (
 )
 
 type CacheControlConfig struct {
-	Duration     string `json:"duration"`
+	Duration     string `yaml:"duration"`
 	durationTime time.Duration
 
-	MaxItems uint `json:"max_items"`
+	MaxItems uint `yaml:"max_items"`
 
-	cache *utils.SizeLimitedCache
+	cache  *utils.SizeLimitedCache
+	logger *slog.Logger
 }
 
 func (cc *CacheControlConfig) Init(ctx context.Context) error {
+	cc.logger = LoggerFromContext(ctx)
 	timeDuration, err := time.ParseDuration(cc.Duration)
 	if err != nil {
 		return fmt.Errorf("cache_control: invalid duration %q: %w", cc.Duration, err)

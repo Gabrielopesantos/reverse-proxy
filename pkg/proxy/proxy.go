@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,49 +13,90 @@ import (
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
-	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/metrics"
 )
 
 const defaultHealthCheckInterval = 5 * time.Second
 
-type Proxy struct {
-	hosts      map[string]*httputil.ReverseProxy
-	lb         balancer.Balancer
-	hcInterval time.Duration
-	logger     *slog.Logger
-	ctx        context.Context
-	cancel     context.CancelFunc
+// healthCheckClient is shared across all health probes. DisableKeepAlives
+// ensures each probe opens a fresh connection (no stale pool entries).
+var healthCheckClient = &http.Client{
+	Timeout: 3 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+	Transport: &http.Transport{DisableKeepAlives: true},
 }
 
-func New(cfg *config.Route, logger *slog.Logger) (*Proxy, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	p := &Proxy{
-		logger: logger,
-		ctx:    ctx,
-		cancel: cancel,
-	}
-	hosts := make(map[string]*httputil.ReverseProxy)
-	hostsHealth := make(map[string]bool)
-	for _, host := range cfg.Upstreams {
+type Proxy struct {
+	// Hosts maps upstream URLs to httputil.ReverseProxy instances.
+	hosts map[string]*httputil.ReverseProxy
+
+	// Load balancer used to select an upstream for each request.
+	lb balancer.Balancer
+
+	// Health check interval and path.
+	hcInterval time.Duration
+	hcPath     string
+
+	logger *slog.Logger
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// buildUpstreams parses each upstream URL, creates an httputil.ReverseProxy
+// with forwarded-header injection, and returns both the proxy map and an
+// initial health map (all false until probed).
+func buildUpstreams(upstreams []string) (map[string]*httputil.ReverseProxy, map[string]bool, error) {
+	hostRevProxyMap := make(map[string]*httputil.ReverseProxy, len(upstreams))
+	hostHealthMap := make(map[string]bool, len(upstreams))
+	for _, host := range upstreams {
 		if host == "" {
-			cancel()
-			return nil, fmt.Errorf("invalid empty upstream host in route")
+			return nil, nil, fmt.Errorf("invalid empty upstream host in route")
 		}
 		upstreamURL, err := url.Parse(host)
 		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to parse upstream url '%s': %w", host, err)
+			return nil, nil, fmt.Errorf("failed to parse upstream url '%s': %w", host, err)
 		}
-		rProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
-
-		originRewrite := rProxy.Rewrite
-		rProxy.Rewrite = func(req *httputil.ProxyRequest) {
-			originRewrite(req)
+		target := upstreamURL // capture for closure
+		reverseProxy := httputil.NewSingleHostReverseProxy(target)
+		reverseProxy.Director = nil // NewSingleHostReverseProxy sets Director; clear it so Rewrite is the sole handler
+		reverseProxy.Rewrite = func(req *httputil.ProxyRequest) {
+			req.SetURL(target)
 			injectForwardedHeaders(req)
 		}
-		hostsHealth[host] = false
-		hosts[host] = rProxy
+		hostHealthMap[host] = false
+		hostRevProxyMap[host] = reverseProxy
+	}
+	return hostRevProxyMap, hostHealthMap, nil
+}
+
+func New(upstreams []string, opts ...Option) (*Proxy, error) {
+	o := &options{
+		lbStrategy: balancer.RANDOM,
+		hcInterval: defaultHealthCheckInterval,
+		hcPath:     "/",
+		logger:     slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if o.hcPath == "" {
+		o.hcPath = "/"
+	}
+
+	hosts, hostsHealth, err := buildUpstreams(upstreams)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &Proxy{
+		logger:     o.logger,
+		ctx:        ctx,
+		cancel:     cancel,
+		hcPath:     o.hcPath,
+		hcInterval: o.hcInterval,
 	}
 
 	// Probe all upstreams concurrently so the balancer starts with accurate
@@ -65,7 +107,7 @@ func New(cfg *config.Route, logger *slog.Logger) (*Proxy, error) {
 		wg.Add(1)
 		go func(h string) {
 			defer wg.Done()
-			alive := isAlive(h)
+			alive := probeUpstream(h, p.hcPath)
 			mu.Lock()
 			hostsHealth[h] = alive
 			mu.Unlock()
@@ -74,15 +116,9 @@ func New(cfg *config.Route, logger *slog.Logger) (*Proxy, error) {
 	wg.Wait()
 
 	p.hosts = hosts
-	p.lb = getLoadBalancer(cfg, hostsHealth)
+	p.lb = balancer.New(o.lbStrategy, hostsHealth, o.weights)
 
-	if cfg.HealthCheckIntervalSeconds > 0 {
-		p.hcInterval = time.Duration(cfg.HealthCheckIntervalSeconds) * time.Second
-	} else {
-		p.hcInterval = defaultHealthCheckInterval
-	}
-
-	p.monitorUpstreamHostsHealth()
+	p.startHealthChecks()
 
 	return p, nil
 }
@@ -106,7 +142,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.hosts[host].ServeHTTP(w, r)
 }
 
-func (p *Proxy) monitorUpstreamHostsHealth() {
+func (p *Proxy) startHealthChecks() {
 	for host := range p.hosts {
 		go p.healthCheck(host)
 	}
@@ -115,41 +151,26 @@ func (p *Proxy) monitorUpstreamHostsHealth() {
 func (p *Proxy) healthCheck(hostAddr string) {
 	ticker := time.NewTicker(p.hcInterval)
 	defer ticker.Stop()
-	wasHealthy := false
+	prevHealthy := false
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
 		case <-ticker.C:
-			alive := isAlive(hostAddr)
+			alive := probeUpstream(hostAddr, p.hcPath)
 			if hs, ok := p.lb.(balancer.HealthSetter); ok {
-				if alive && !wasHealthy {
+				if alive && !prevHealthy {
 					hs.SetHealthStatus(hostAddr, true)
 					metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(1)
-					p.logger.Info("upstream healthy", "host", hostAddr)
-				} else if !alive && wasHealthy {
+					p.logger.Debug("upstream healthy", "host", hostAddr)
+				} else if !alive && prevHealthy {
 					hs.SetHealthStatus(hostAddr, false)
 					metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(0)
 					p.logger.Warn("upstream unhealthy", "host", hostAddr)
 				}
 			}
-			wasHealthy = alive
+			prevHealthy = alive
 		}
-	}
-}
-
-func getLoadBalancer(cfg *config.Route, hosts map[string]bool) balancer.Balancer {
-	switch cfg.LoadBalancerPolicy {
-	case balancer.WEIGHTED_ROUND_ROBIN:
-		return balancer.NewWeightedRoundRobinBalancer(hosts, cfg.Weights)
-	case balancer.LEAST_CONNECTIONS:
-		return balancer.NewLeastConnectionsBalancer(hosts)
-	case balancer.IP_HASH:
-		return balancer.NewIPHashBalancer(hosts)
-	case balancer.ROUND_ROBIN:
-		return balancer.NewRoundRobinBalancer(hosts)
-	default:
-		return balancer.NewRandomBalancer(hosts)
 	}
 }
 
@@ -178,26 +199,21 @@ func injectForwardedHeaders(proxyReq *httputil.ProxyRequest) {
 	proxyReq.In.Header.Set("X-Forwarded-Proto", scheme)
 }
 
-// isAlive checks if a TCP connection can be established to the given URL's host.
-func isAlive(hostAddr string) bool {
+// probeUpstream performs an HTTP GET to path on hostAddr and returns true when
+// the response status is below 500. Any 1xx–4xx is treated as healthy (the
+// application is reachable and processing requests). A connection error,
+// timeout, or 5xx means the upstream is unhealthy.
+func probeUpstream(hostAddr, path string) bool {
 	u, err := url.Parse(hostAddr)
 	if err != nil || u.Host == "" {
 		return false
 	}
-	host := u.Host
-	// If no port specified, use default for scheme
-	if _, _, err := net.SplitHostPort(host); err != nil {
-		switch u.Scheme {
-		case "https":
-			host = host + ":443"
-		default:
-			host = host + ":80"
-		}
-	}
-	conn, err := net.DialTimeout("tcp", host, 3*time.Second)
+	u.Path = path
+	resp, err := healthCheckClient.Get(u.String())
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
-	return true
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode < http.StatusInternalServerError
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 )
 
+// loggingResponseWriter wraps an http.ResponseWriter and logs the response status code.
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	statusCode int

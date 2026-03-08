@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -11,19 +12,23 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const BASIC_AUTH_ROW_DELIMITER = "\n"
+
 type BasicAuthConfig struct {
-	File string `json:"file"`
+	File string `yaml:"file"`
 
 	encodedAuthRows []string
+	logger          *slog.Logger
 }
 
 func (ba *BasicAuthConfig) Init(ctx context.Context) error {
+	ba.logger = LoggerFromContext(ctx)
 	data, err := os.ReadFile(ba.File)
 	if err != nil {
 		return fmt.Errorf("failed to open file with basic auth credentials: %w", err)
 	}
 
-	ba.encodedAuthRows = strings.Split(string(data), "\n")
+	ba.encodedAuthRows = strings.Split(string(data), BASIC_AUTH_ROW_DELIMITER)
 
 	return nil
 }
@@ -46,14 +51,15 @@ func (ba *BasicAuthConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (ba *BasicAuthConfig) compareAuthValue(user string, passwd string) bool {
-
 	for _, authRow := range ba.encodedAuthRows {
 		authRowSplit := strings.Split(authRow, ":")
 		if len(authRowSplit) != 2 {
 			continue
 		}
 
-		if subtle.ConstantTimeCompare([]byte(user), []byte(authRowSplit[0])) == 1 && bcrypt.CompareHashAndPassword([]byte(authRowSplit[1]), []byte(passwd)) == nil {
+		rowUser := authRowSplit[0]
+		rowPasswdHash := authRowSplit[1]
+		if subtle.ConstantTimeCompare([]byte(user), []byte(rowUser)) == 1 && bcrypt.CompareHashAndPassword([]byte(rowPasswdHash), []byte(passwd)) == nil {
 			return true
 		}
 	}

@@ -8,7 +8,7 @@ routes:
       - "http://localhost:8081"
       - "http://localhost:8082"
       - "http://localhost:8084"
-    lb_policy: "round_robin"
+    lb_strategy: "round_robin"
     healthcheck_interval_seconds: 5
     middleware:
       - logger:
@@ -18,12 +18,36 @@ routes:
           max_requests: 4
           time_frame_seconds: 30
 
-  # weighted_round_robin example: :8081 gets ~75% of traffic, :8082 gets ~25%
+  /second:
+    upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
+    healthcheck_interval_seconds: 10
+    healthcheck_path: "/healthz" # omit to default to "/"
+    middleware:
+      - logger:
+          stream: stdout
+          mode: text
+      - rate_limiter:
+          max_requests: 2
+          time_frame_seconds: 60
+      - basic_auth:
+          file: ./examples/basic_auth
+      - cache_control:
+          duration: 30s
+  #     - waf:
+  #         mode: block # "block" (default) | "log"
+  #         rules: # omit to enable all; or list a subset:
+  #           - sql_injection
+  #           - xss
+  #           - path_traversal
+  #           - command_injection
+  #         max_body_bytes: 65536 # bytes of request body to inspect
+  #       weighted_round_robin example: :8081 gets ~75% of traffic, :8082 gets ~25%
+
   # /weighted:
   #   upstreams:
   #     - "http://localhost:8081"
   #     - "http://localhost:8082"
-  #   lb_policy: "weighted_round_robin"
+  #   lb_strategy: "weighted_round_robin"
   #   weights:
   #     "http://localhost:8081": 3
   #     "http://localhost:8082": 1
@@ -33,34 +57,11 @@ routes:
   #   upstreams:
   #     - "http://localhost:8081"
   #     - "http://localhost:8082"
-  #   lb_policy: "least_connections"
+  #   lb_strategy: "least_connections"
 
   # ip_hash example: same client IP always hits the same upstream
   # /sticky:
   #   upstreams:
   #     - "http://localhost:8081"
   #     - "http://localhost:8082"
-  #   lb_policy: "ip_hash"
-
-  /second:
-    upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
-    healthcheck_interval_seconds: 10
-    middleware:
-      - rate_limiter:
-          max_requests: 2
-          time_frame_seconds: 60
-      - basic_auth:
-          file: ./examples/basic_auth
-      - cache_control:
-          duration: 30s
-      - logger:
-          stream: stdout
-          mode: text
-      # - waf:
-      #     mode: block           # "block" (default) | "log"
-      #     rules:                # omit to enable all; or list a subset:
-      #       - sql_injection
-      #       - xss
-      #       - path_traversal
-      #       - command_injection
-      #     max_body_bytes: 65536 # bytes of request body to inspect
+  #   lb_strategy: "ip_hash"

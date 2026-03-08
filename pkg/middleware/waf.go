@@ -13,14 +13,22 @@ import (
 
 const defaultMaxBodyBytes = 65536
 
+type WAFMode string
+
+const (
+	WAFModeBlock WAFMode = "block"
+	WAFModeLog   WAFMode = "log"
+)
+
 // WAFConfig implements a Web Application Firewall middleware that inspects
 // requests for common attack patterns.
 type WAFConfig struct {
-	Mode         string   `json:"mode"`           // "block" (default) | "log"
-	Rules        []string `json:"rules"`          // which built-in rule sets to enable; empty = all
-	MaxBodyBytes int64    `json:"max_body_bytes"` // max bytes of body to inspect; default 65536
+	Mode         WAFMode  `yaml:"mode"`           // "block" (default) | "log"
+	Rules        []string `yaml:"rules"`          // which built-in rule sets to enable; empty = all
+	MaxBodyBytes int64    `yaml:"max_body_bytes"` // max bytes of body to inspect; default 65536
 
 	compiled []*compiledRule
+	logger   *slog.Logger
 }
 
 type compiledRule struct {
@@ -35,12 +43,15 @@ var builtinRuleSets = map[string]string{
 	"command_injection": "(?i)[|;&`]|\\$\\([^)]+\\)",
 }
 
-func (w *WAFConfig) Init(_ context.Context) error {
+func (w *WAFConfig) Init(ctx context.Context) error {
+	w.logger = LoggerFromContext(ctx)
+
 	if w.MaxBodyBytes == 0 {
 		w.MaxBodyBytes = defaultMaxBodyBytes
 	}
+
 	if w.Mode == "" {
-		w.Mode = "block"
+		w.Mode = WAFModeBlock
 	}
 
 	names := w.Rules
@@ -67,8 +78,8 @@ func (w *WAFConfig) Init(_ context.Context) error {
 func (w *WAFConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		if matched, rule, field := w.scan(r); matched {
-			slog.Default().Warn("WAF: suspicious request", "rule", rule, "field", field, "path", r.URL.Path, "ip", clientIP(r))
-			if w.Mode == "block" {
+			w.logger.Warn("suspicious request", "rule", rule, "field", field, "path", r.URL.Path, "ip", clientIP(r))
+			if w.Mode == WAFModeBlock {
 				http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}

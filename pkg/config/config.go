@@ -2,7 +2,7 @@ package config
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,27 +19,38 @@ const (
 )
 
 type Config struct {
-	Server `yaml:"server"`
-	Routes map[string]*Route `yaml:"routes"`
-	sync.RWMutex
+	ServerConfig `yaml:"server"`
+	Routes       map[string]*Route `yaml:"routes"`
+	mu           sync.RWMutex
 
 	configPath      string
+	watchInterval   time.Duration
 	reloadCallbacks []func()
 }
 
-type Server struct {
+// Option configures a Config at construction time.
+type Option func(*Config)
+
+func WithWatchInterval(d time.Duration) Option {
+	return func(c *Config) { c.watchInterval = d }
+}
+
+type ServerConfig struct {
 	Address            string `yaml:"address"`
 	ReadTimeoutSeconds uint   `yaml:"read_timeout"`
 }
 
 type Route struct {
-	Upstreams                  []string                    `yaml:"upstreams"`
-	LoadBalancerPolicy         balancer.LoadBalancerPolicy `yaml:"lb_policy"`
+	Upstreams            []string                      `yaml:"upstreams"`
+	LoadBalancerStrategy balancer.LoadBalancerStrategy `yaml:"lb_strategy"`
 	// Weights maps upstream URL to its relative weight for weighted_round_robin.
 	// Omitted hosts default to weight 1.
-	Weights                    map[string]int              `yaml:"weights"`
-	HealthCheckIntervalSeconds uint                        `yaml:"healthcheck_interval_seconds"`
-	// Middleware is an ordered list of single-key maps: [{type: config}, ...]
+	Weights                    map[string]int `yaml:"weights"`
+	HealthCheckIntervalSeconds uint           `yaml:"healthcheck_interval_seconds"`
+	// HealthCheckPath is the HTTP path used for upstream health probes.
+	// Defaults to "/" when empty.
+	HealthCheckPath string `yaml:"healthcheck_path"`
+	// MiddlewareInternalRepr is an ordered list of single-key maps: [{type: config}, ...]
 	MiddlewareInternalRepr []map[middleware.MiddlewareType]interface{} `yaml:"middleware"`
 
 	middlewareList []middleware.Middleware
@@ -49,140 +60,177 @@ func (r *Route) Middleware() []middleware.Middleware {
 	return r.middlewareList
 }
 
+// Snapshot returns a stable copy of the routes map under the read lock.
+func (c *Config) Snapshot() map[string]*Route {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]*Route, len(c.Routes))
+	for k, v := range c.Routes {
+		out[k] = v
+	}
+	return out
+}
+
 // OnReload registers a callback that is called after each successful config reload.
 func (c *Config) OnReload(fn func()) {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.reloadCallbacks = append(c.reloadCallbacks, fn)
 }
 
-func LoadConfig(configPath string) (*Config, error) {
-	config := &Config{configPath: configPath}
-	err := readConfig(config)
-	if err != nil {
+func LoadConfig(configPath string, opts ...Option) (*Config, error) {
+	cfg := &Config{
+		configPath:    configPath,
+		watchInterval: 5 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	// TODO: Wire ctx and logger...
+	if err := readConfigFile(context.Background(), slog.Default(), cfg); err != nil {
 		return nil, err
 	}
 
-	return config, nil
+	return cfg, nil
 }
 
-func (c *Config) Watch(logger *slog.Logger) error {
+func (c *Config) Watch(ctx context.Context, logger *slog.Logger) error {
+	ticker := time.NewTicker(c.watchInterval)
+	defer ticker.Stop()
+	var lastHash [32]byte
 	for {
-		time.Sleep(5 * time.Second)
-		if err := readConfig(c); err != nil {
-			logger.Warn(fmt.Sprintf("could not read updated configuration file: %v", err))
-			continue
-		}
-		c.RLock()
-		callbacks := make([]func(), len(c.reloadCallbacks))
-		copy(callbacks, c.reloadCallbacks)
-		c.RUnlock()
-		for _, fn := range callbacks {
-			fn()
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			data, err := os.ReadFile(c.configPath)
+			if err != nil {
+				logger.Warn("could not read config file", "err", err)
+				continue
+			}
+			hash := sha256.Sum256(data)
+			if hash == lastHash {
+				continue
+			}
+			if err := readConfigFile(ctx, logger, c); err != nil {
+				logger.Warn("could not parse updated config file", "err", err)
+				continue
+			}
+			lastHash = hash
+			c.mu.RLock()
+			callbacks := make([]func(), len(c.reloadCallbacks))
+			copy(callbacks, c.reloadCallbacks)
+			c.mu.RUnlock()
+			for _, fn := range callbacks {
+				fn()
+			}
 		}
 	}
 }
 
-func readConfig(config *Config) error {
-	config.Lock()
-	defer config.Unlock()
+func readConfigFile(ctx context.Context, logger *slog.Logger, config *Config) error {
+	config.mu.Lock()
+	defer config.mu.Unlock()
 
-	configFileContent, err := os.ReadFile(config.configPath)
+	configFile, err := os.ReadFile(config.configPath)
 	if err != nil {
 		return err
 	}
 
-	if err = yaml.Unmarshal(configFileContent, config); err != nil {
+	if err = yaml.Unmarshal(configFile, config); err != nil {
 		return err
 	}
 
-	if err = parseRoutesMiddleware(config); err != nil {
-		return err
-	}
-
-	return nil
+	ctx = middleware.ContextWithLogger(ctx, logger)
+	return parseRoutesMiddleware(ctx, config)
 }
 
-// middlewareFactory creates and initialises a Middleware from its raw JSON encoding.
-type middlewareFactory func(enc []byte) (middleware.Middleware, error)
+// middlewareFactory creates and initialises a Middleware from its raw YAML encoding.
+type middlewareFactory func(ctx context.Context, enc []byte) (middleware.Middleware, error)
 
 var middlewareRegistry = map[middleware.MiddlewareType]middlewareFactory{
-	middleware.LOGGER: func(enc []byte) (middleware.Middleware, error) {
+	middleware.LOGGER: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
 		cfg := &middleware.LoggerConfig{}
-		if err := json.Unmarshal(enc, cfg); err != nil {
+		if err := yaml.Unmarshal(enc, cfg); err != nil {
 			return nil, err
 		}
-		if err := cfg.Init(context.TODO()); err != nil {
+		if err := cfg.Init(ctx); err != nil {
 			return nil, err
 		}
 		return cfg, nil
 	},
-	middleware.RATE_LIMITER: func(enc []byte) (middleware.Middleware, error) {
+
+	middleware.RATE_LIMITER: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
 		cfg := &middleware.RateLimiterConfig{}
-		if err := json.Unmarshal(enc, cfg); err != nil {
+		if err := yaml.Unmarshal(enc, cfg); err != nil {
 			return nil, err
 		}
-		if err := cfg.Init(context.TODO()); err != nil {
+		if err := cfg.Init(ctx); err != nil {
 			return nil, err
 		}
 		return cfg, nil
 	},
-	middleware.BASIC_AUTH: func(enc []byte) (middleware.Middleware, error) {
+
+	middleware.BASIC_AUTH: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
 		cfg := &middleware.BasicAuthConfig{}
-		if err := json.Unmarshal(enc, cfg); err != nil {
+		if err := yaml.Unmarshal(enc, cfg); err != nil {
 			return nil, err
 		}
-		if err := cfg.Init(context.TODO()); err != nil {
+		if err := cfg.Init(ctx); err != nil {
 			return nil, err
 		}
 		return cfg, nil
 	},
-	middleware.CACHE_CONTROL: func(enc []byte) (middleware.Middleware, error) {
+
+	middleware.CACHE_CONTROL: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
 		cfg := &middleware.CacheControlConfig{}
-		if err := json.Unmarshal(enc, cfg); err != nil {
+		if err := yaml.Unmarshal(enc, cfg); err != nil {
 			return nil, err
 		}
-		if err := cfg.Init(context.TODO()); err != nil {
+		if err := cfg.Init(ctx); err != nil {
 			return nil, err
 		}
 		return cfg, nil
 	},
-	middleware.PROMETHEUS: func(enc []byte) (middleware.Middleware, error) {
+
+	middleware.PROMETHEUS: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
 		cfg := &middleware.PrometheusConfig{}
-		if err := json.Unmarshal(enc, cfg); err != nil {
+		if err := yaml.Unmarshal(enc, cfg); err != nil {
 			return nil, err
 		}
-		if err := cfg.Init(context.TODO()); err != nil {
+		if err := cfg.Init(ctx); err != nil {
 			return nil, err
 		}
 		return cfg, nil
 	},
-	middleware.WAF: func(enc []byte) (middleware.Middleware, error) {
+
+	middleware.WAF: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
 		cfg := &middleware.WAFConfig{}
-		if err := json.Unmarshal(enc, cfg); err != nil {
+		if err := yaml.Unmarshal(enc, cfg); err != nil {
 			return nil, err
 		}
-		if err := cfg.Init(context.TODO()); err != nil {
+		if err := cfg.Init(ctx); err != nil {
 			return nil, err
 		}
 		return cfg, nil
 	},
 }
 
-func parseRoutesMiddleware(config *Config) error {
+func parseRoutesMiddleware(ctx context.Context, config *Config) error {
 	for _, routeConfig := range config.Routes {
 		routeConfig.middlewareList = routeConfig.middlewareList[:0]
 		for _, entry := range routeConfig.MiddlewareInternalRepr {
 			for mwType, mwConfig := range entry {
+				ctx := middleware.ContextWithMiddlewareType(ctx, string(mwType))
 				factory, ok := middlewareRegistry[mwType]
 				if !ok {
 					return fmt.Errorf("unknown middleware type: %s", mwType)
 				}
-				enc, err := json.Marshal(mwConfig)
+				enc, err := yaml.Marshal(mwConfig)
 				if err != nil {
 					return fmt.Errorf("failed to marshal middleware config for type %s: %w", mwType, err)
 				}
-				mw, err := factory(enc)
+				mw, err := factory(ctx, enc)
 				if err != nil {
 					return fmt.Errorf("failed to initialize middleware %s: %w", mwType, err)
 				}

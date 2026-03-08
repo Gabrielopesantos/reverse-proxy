@@ -2,14 +2,10 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
@@ -17,13 +13,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// atomicMuxHandler wraps an http.ServeMux behind an atomic pointer so the
+// muxHandler wraps an http.ServeMux behind an atomic pointer so the
 // active router can be swapped without downtime during config hot-reload.
-type atomicMuxHandler struct {
+type muxHandler struct {
 	mux atomic.Pointer[http.ServeMux]
 }
 
-func (a *atomicMuxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (a *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.mux.Load().ServeHTTP(w, r)
 }
 
@@ -31,60 +27,74 @@ type Server struct {
 	server        http.Server
 	config        *config.Config
 	logger        *slog.Logger
-	handler       *atomicMuxHandler
+	handler       *muxHandler
 	activeProxies []*proxy.Proxy
 	proxiesMu     sync.Mutex
 }
 
-func New(config *config.Config, logger *slog.Logger) *Server {
+// Option configures a Server at construction time.
+type Option func(*Server)
+
+func WithLogger(l *slog.Logger) Option {
+	return func(s *Server) { s.logger = l }
+}
+
+func New(cfg *config.Config, opts ...Option) *Server {
 	s := &Server{
-		config:  config,
-		logger:  logger,
-		handler: &atomicMuxHandler{},
+		config:  cfg,
+		logger:  slog.Default(),
+		handler: &muxHandler{},
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	s.server = http.Server{
-		Addr:        config.Server.Address,
-		ReadTimeout: time.Duration(config.Server.ReadTimeoutSeconds) * time.Second,
+		Addr:        cfg.ServerConfig.Address,
+		ReadTimeout: time.Duration(cfg.ServerConfig.ReadTimeoutSeconds) * time.Second,
 		Handler:     s.handler,
 	}
 	return s
 }
 
-func (s *Server) ListenAndServe() error {
-	if err := s.reloadRoutes(); err != nil {
-		s.logger.Error(fmt.Sprintf("error while mapping proxy routes: %s", err))
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	if err := s.applyRoutes(); err != nil {
+		s.logger.Error("error while mapping proxy routes", "err", err)
 		return err
 	}
 
 	// Re-map routes on every successful config reload.
 	s.config.OnReload(func() {
-		if err := s.reloadRoutes(); err != nil {
-			s.logger.Error(fmt.Sprintf("error remapping routes after config reload: %s", err))
+		if err := s.applyRoutes(); err != nil {
+			s.logger.Error("error remapping routes after config reload", "err", err)
 		}
 	})
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	go func(quitChannel chan os.Signal) {
-		s.logger.Info(fmt.Sprintf("Server listening on address: %s", s.config.Server.Address))
+	errCh := make(chan error, 1)
+	go func() {
+		s.logger.Info("server listening", "addr", s.config.ServerConfig.Address)
 		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
-			s.logger.Error(fmt.Sprintf("error starting server: %s", err))
-			quitChannel <- os.Interrupt
+			errCh <- err
 		}
-	}(quit)
+	}()
 
-	<-quit
-	ctx, shutdown := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdown()
+	select {
+	case err := <-errCh:
+		s.logger.Error("error starting server", "err", err)
+		return err
+	case <-ctx.Done():
+	}
 
-	err := s.server.Shutdown(ctx)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := s.server.Shutdown(shutdownCtx)
 	if err == nil {
-		s.logger.Info("Server gracefully exited")
+		s.logger.Info("server gracefully exited")
 	}
 	return err
 }
 
-func (s *Server) reloadRoutes() error {
+func (s *Server) applyRoutes() error {
 	router := http.NewServeMux()
 
 	// Health and metrics endpoints.
@@ -94,31 +104,39 @@ func (s *Server) reloadRoutes() error {
 	})
 	router.Handle("/metrics", promhttp.Handler())
 
-	s.config.RLock()
-	defer s.config.RUnlock()
+	// Snapshot routes outside any lock so proxy creation (including concurrent
+	// health probes) does not block the config watcher from writing a new config.
+	routes := s.config.Snapshot()
 
-	var newProxies []*proxy.Proxy
-	for routePathPattern, routeConfig := range s.config.Routes {
-		rProxy, err := proxy.New(routeConfig, s.logger)
+	var proxies []*proxy.Proxy
+	for routePathPattern, routeConfig := range routes {
+		p, err := proxy.New(
+			routeConfig.Upstreams,
+			proxy.WithLoadBalancerStrategy(routeConfig.LoadBalancerStrategy),
+			proxy.WithWeights(routeConfig.Weights),
+			proxy.WithHealthCheckInterval(time.Duration(routeConfig.HealthCheckIntervalSeconds)*time.Second),
+			proxy.WithHealthCheckPath(routeConfig.HealthCheckPath),
+			proxy.WithLogger(s.logger),
+		)
 		if err != nil {
 			return err
 		}
-		newProxies = append(newProxies, rProxy)
+		proxies = append(proxies, p)
 
-		handler := http.HandlerFunc(rProxy.ServeHTTP)
+		handler := http.HandlerFunc(p.ServeHTTP)
 		for i := len(routeConfig.Middleware()) - 1; i >= 0; i-- {
 			handler = routeConfig.Middleware()[i].Exec(handler.ServeHTTP)
 		}
 
 		router.Handle(routePathPattern, handler)
-		s.logger.Info(fmt.Sprintf("Handler set for route %s", routePathPattern))
 	}
 
+	s.logger.Debug("routes applied", "count", len(routes))
 	s.handler.mux.Store(router)
 
 	s.proxiesMu.Lock()
 	old := s.activeProxies
-	s.activeProxies = newProxies
+	s.activeProxies = proxies
 	s.proxiesMu.Unlock()
 
 	for _, p := range old {

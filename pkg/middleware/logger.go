@@ -25,13 +25,16 @@ const (
 )
 
 type LoggerConfig struct {
-	Stream StreamType `json:"stream"`
-	Mode   LoggerMode `json:"mode"`
-	logger *slog.Logger
-	file   *os.File
+	Stream    StreamType `yaml:"stream"`
+	Mode      LoggerMode `yaml:"mode"`
+	accessLog *slog.Logger
+	logger    *slog.Logger
+	file      *os.File
 }
 
 func (l *LoggerConfig) Init(ctx context.Context) error {
+	l.logger = LoggerFromContext(ctx)
+
 	var writer io.Writer
 	switch l.Stream {
 	case StreamTypeStdout:
@@ -60,7 +63,7 @@ func (l *LoggerConfig) Init(ctx context.Context) error {
 		return fmt.Errorf("invalid logger mode provided, '%s'", l.Mode)
 	}
 
-	l.logger = slog.New(handler)
+	l.accessLog = slog.New(handler)
 	return nil
 }
 
@@ -70,6 +73,6 @@ func (l *LoggerConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 		lrw := NewLoggingResponseWriter(w)
 		next.ServeHTTP(lrw, r)
 
-		l.logger.Info(fmt.Sprintf("Path: %s | Method: %s | Status Code: %d", r.URL.Path, r.Method, lrw.statusCode))
+		l.accessLog.Info("request", "path", r.URL.Path, "method", r.Method, "status_code", lrw.statusCode)
 	}
 }

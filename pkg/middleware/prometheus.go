@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,10 +13,12 @@ import (
 
 // PrometheusConfig is middleware that records per-route request metrics.
 type PrometheusConfig struct {
-	Route string `json:"route"`
+	Route  string `yaml:"route"`
+	logger *slog.Logger
 }
 
-func (p *PrometheusConfig) Init(_ context.Context) error {
+func (p *PrometheusConfig) Init(ctx context.Context) error {
+	p.logger = LoggerFromContext(ctx)
 	if p.Route == "" {
 		return fmt.Errorf("prometheus middleware requires a non-empty route label")
 	}

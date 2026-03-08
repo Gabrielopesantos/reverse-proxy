@@ -10,14 +10,14 @@ var (
 	ErrNoHost = errors.New("no healthy upstream host found")
 )
 
-type LoadBalancerPolicy string
+type LoadBalancerStrategy string
 
 const (
-	RANDOM               LoadBalancerPolicy = "random"
-	ROUND_ROBIN          LoadBalancerPolicy = "round_robin"
-	WEIGHTED_ROUND_ROBIN LoadBalancerPolicy = "weighted_round_robin"
-	LEAST_CONNECTIONS    LoadBalancerPolicy = "least_connections"
-	IP_HASH              LoadBalancerPolicy = "ip_hash"
+	RANDOM               LoadBalancerStrategy = "random"
+	ROUND_ROBIN          LoadBalancerStrategy = "round_robin"
+	WEIGHTED_ROUND_ROBIN LoadBalancerStrategy = "weighted_round_robin"
+	LEAST_CONNECTIONS    LoadBalancerStrategy = "least_connections"
+	IP_HASH              LoadBalancerStrategy = "ip_hash"
 )
 
 // Balancer selects which target host is going to serve the request.
@@ -74,4 +74,20 @@ func (b *BaseBalancer) SetHealthStatus(host string, isHealthy bool) {
 	defer b.Unlock()
 
 	b.hosts[host] = isHealthy
+}
+
+// New constructs a Balancer for the given strategy.
+func New(strategy LoadBalancerStrategy, hosts map[string]bool, weights map[string]int) Balancer {
+	switch strategy {
+	case WEIGHTED_ROUND_ROBIN:
+		return NewWeightedRoundRobinBalancer(hosts, weights)
+	case LEAST_CONNECTIONS:
+		return NewLeastConnectionsBalancer(hosts)
+	case IP_HASH:
+		return NewIPHashBalancer(hosts)
+	case ROUND_ROBIN:
+		return NewRoundRobinBalancer(hosts)
+	default:
+		return NewRandomBalancer(hosts)
+	}
 }
