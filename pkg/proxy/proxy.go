@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
@@ -56,8 +57,24 @@ func New(cfg *config.Route, logger *slog.Logger) (*Proxy, error) {
 		hosts[host] = rProxy
 	}
 
+	// Probe all upstreams concurrently so the balancer starts with accurate
+	// health state instead of treating every host as unhealthy for up to hcInterval.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for host := range hostsHealth {
+		wg.Add(1)
+		go func(h string) {
+			defer wg.Done()
+			alive := isAlive(h)
+			mu.Lock()
+			hostsHealth[h] = alive
+			mu.Unlock()
+		}(host)
+	}
+	wg.Wait()
+
 	p.hosts = hosts
-	p.lb = getLoadBalancer(cfg.LoadBalancerPolicy)(hostsHealth)
+	p.lb = getLoadBalancer(cfg, hostsHealth)
 
 	if cfg.HealthCheckIntervalSeconds > 0 {
 		p.hcInterval = time.Duration(cfg.HealthCheckIntervalSeconds) * time.Second
@@ -75,11 +92,15 @@ func (p *Proxy) Stop() {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host, err := p.lb.Balance()
+	host, err := balancer.Pick(p.lb, r)
 	if err != nil {
 		p.logger.Error("no healthy upstream available", "path", r.URL.Path, "err", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
+	}
+
+	if rel, ok := p.lb.(balancer.Releaser); ok {
+		defer rel.Release(host)
 	}
 
 	p.hosts[host].ServeHTTP(w, r)
@@ -101,28 +122,34 @@ func (p *Proxy) healthCheck(hostAddr string) {
 			return
 		case <-ticker.C:
 			alive := isAlive(hostAddr)
-			if alive && !wasHealthy {
-				p.lb.SetHealthStatus(hostAddr, true)
-				metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(1)
-				p.logger.Info("upstream healthy", "host", hostAddr)
-			} else if !alive && wasHealthy {
-				p.lb.SetHealthStatus(hostAddr, false)
-				metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(0)
-				p.logger.Warn("upstream unhealthy", "host", hostAddr)
+			if hs, ok := p.lb.(balancer.HealthSetter); ok {
+				if alive && !wasHealthy {
+					hs.SetHealthStatus(hostAddr, true)
+					metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(1)
+					p.logger.Info("upstream healthy", "host", hostAddr)
+				} else if !alive && wasHealthy {
+					hs.SetHealthStatus(hostAddr, false)
+					metrics.UpstreamHealth.WithLabelValues(hostAddr).Set(0)
+					p.logger.Warn("upstream unhealthy", "host", hostAddr)
+				}
 			}
 			wasHealthy = alive
 		}
 	}
 }
 
-func getLoadBalancer(policy balancer.LoadBalancerPolicy) func(map[string]bool) balancer.Balancer {
-	switch policy {
-	case balancer.RANDOM:
-		return balancer.NewRandomBalancer
+func getLoadBalancer(cfg *config.Route, hosts map[string]bool) balancer.Balancer {
+	switch cfg.LoadBalancerPolicy {
+	case balancer.WEIGHTED_ROUND_ROBIN:
+		return balancer.NewWeightedRoundRobinBalancer(hosts, cfg.Weights)
+	case balancer.LEAST_CONNECTIONS:
+		return balancer.NewLeastConnectionsBalancer(hosts)
+	case balancer.IP_HASH:
+		return balancer.NewIPHashBalancer(hosts)
 	case balancer.ROUND_ROBIN:
-		return balancer.NewRoundRobinBalancer
+		return balancer.NewRoundRobinBalancer(hosts)
 	default:
-		return balancer.NewRandomBalancer
+		return balancer.NewRandomBalancer(hosts)
 	}
 }
 

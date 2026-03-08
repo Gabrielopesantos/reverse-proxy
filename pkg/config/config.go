@@ -35,6 +35,9 @@ type Server struct {
 type Route struct {
 	Upstreams                  []string                    `yaml:"upstreams"`
 	LoadBalancerPolicy         balancer.LoadBalancerPolicy `yaml:"lb_policy"`
+	// Weights maps upstream URL to its relative weight for weighted_round_robin.
+	// Omitted hosts default to weight 1.
+	Weights                    map[string]int              `yaml:"weights"`
 	HealthCheckIntervalSeconds uint                        `yaml:"healthcheck_interval_seconds"`
 	// Middleware is an ordered list of single-key maps: [{type: config}, ...]
 	MiddlewareInternalRepr []map[middleware.MiddlewareType]interface{} `yaml:"middleware"`

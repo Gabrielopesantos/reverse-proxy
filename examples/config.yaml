@@ -18,6 +18,30 @@ routes:
           max_requests: 4
           time_frame_seconds: 30
 
+  # weighted_round_robin example: :8081 gets ~75% of traffic, :8082 gets ~25%
+  # /weighted:
+  #   upstreams:
+  #     - "http://localhost:8081"
+  #     - "http://localhost:8082"
+  #   lb_policy: "weighted_round_robin"
+  #   weights:
+  #     "http://localhost:8081": 3
+  #     "http://localhost:8082": 1
+
+  # least_connections example: traffic goes to the upstream with fewest active requests
+  # /least:
+  #   upstreams:
+  #     - "http://localhost:8081"
+  #     - "http://localhost:8082"
+  #   lb_policy: "least_connections"
+
+  # ip_hash example: same client IP always hits the same upstream
+  # /sticky:
+  #   upstreams:
+  #     - "http://localhost:8081"
+  #     - "http://localhost:8082"
+  #   lb_policy: "ip_hash"
+
   /second:
     upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
     healthcheck_interval_seconds: 10
