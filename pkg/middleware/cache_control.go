@@ -41,8 +41,8 @@ func (cc *CacheControlConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (cc *CacheControlConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (cc *CacheControlConfig) Exec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only cache GET/HEAD responses.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			next.ServeHTTP(w, r)
@@ -88,7 +88,13 @@ func (cc *CacheControlConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 			Body:       crw.body.Bytes(),
 			ExpiresAt:  time.Now().Add(ttl),
 		})
-	}
+	})
+}
+
+func (cc *CacheControlConfig) Close() error { return nil }
+
+func init() {
+	RegisterYAML(CACHE_CONTROL, func() *CacheControlConfig { return &CacheControlConfig{} })
 }
 
 func writeCachedResponse(w http.ResponseWriter, cached *utils.CachedResponse) {

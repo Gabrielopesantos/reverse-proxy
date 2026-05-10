@@ -19,7 +19,8 @@ const (
 
 type Middleware interface {
 	Init(context.Context) error
-	Exec(http.HandlerFunc) http.HandlerFunc
+	Exec(http.Handler) http.Handler
+	Close() error
 }
 
 type loggerCtxKey struct{}

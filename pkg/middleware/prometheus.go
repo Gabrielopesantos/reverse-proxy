@@ -25,8 +25,8 @@ func (p *PrometheusConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (p *PrometheusConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (p *PrometheusConfig) Exec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		lrw := NewLoggingResponseWriter(w)
 		next.ServeHTTP(lrw, r)
@@ -42,5 +42,11 @@ func (p *PrometheusConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 		metrics.RequestDuration.
 			WithLabelValues(p.Route, r.Method).
 			Observe(time.Since(start).Seconds())
-	}
+	})
+}
+
+func (p *PrometheusConfig) Close() error { return nil }
+
+func init() {
+	RegisterYAML(PROMETHEUS, func() *PrometheusConfig { return &PrometheusConfig{} })
 }

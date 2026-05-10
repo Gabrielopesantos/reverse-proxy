@@ -75,8 +75,8 @@ func (w *WAFConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (w *WAFConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
-	return func(rw http.ResponseWriter, r *http.Request) {
+func (w *WAFConfig) Exec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if matched, rule, field := w.scan(r); matched {
 			w.logger.Warn("suspicious request", "rule", rule, "field", field, "path", r.URL.Path, "ip", clientIP(r))
 			if w.Mode == WAFModeBlock {
@@ -85,7 +85,13 @@ func (w *WAFConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		next.ServeHTTP(rw, r)
-	}
+	})
+}
+
+func (w *WAFConfig) Close() error { return nil }
+
+func init() {
+	RegisterYAML(WAF, func() *WAFConfig { return &WAFConfig{} })
 }
 
 func (w *WAFConfig) scan(r *http.Request) (matched bool, ruleName, field string) {

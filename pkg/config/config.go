@@ -138,92 +138,17 @@ func readConfigFile(ctx context.Context, logger *slog.Logger, config *Config) er
 	return parseRoutesMiddleware(ctx, config)
 }
 
-// middlewareFactory creates and initialises a Middleware from its raw YAML encoding.
-type middlewareFactory func(ctx context.Context, enc []byte) (middleware.Middleware, error)
-
-var middlewareRegistry = map[middleware.MiddlewareType]middlewareFactory{
-	middleware.LOGGER: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
-		cfg := &middleware.LoggerConfig{}
-		if err := yaml.Unmarshal(enc, cfg); err != nil {
-			return nil, err
-		}
-		if err := cfg.Init(ctx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	},
-
-	middleware.RATE_LIMITER: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
-		cfg := &middleware.RateLimiterConfig{}
-		if err := yaml.Unmarshal(enc, cfg); err != nil {
-			return nil, err
-		}
-		if err := cfg.Init(ctx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	},
-
-	middleware.BASIC_AUTH: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
-		cfg := &middleware.BasicAuthConfig{}
-		if err := yaml.Unmarshal(enc, cfg); err != nil {
-			return nil, err
-		}
-		if err := cfg.Init(ctx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	},
-
-	middleware.CACHE_CONTROL: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
-		cfg := &middleware.CacheControlConfig{}
-		if err := yaml.Unmarshal(enc, cfg); err != nil {
-			return nil, err
-		}
-		if err := cfg.Init(ctx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	},
-
-	middleware.PROMETHEUS: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
-		cfg := &middleware.PrometheusConfig{}
-		if err := yaml.Unmarshal(enc, cfg); err != nil {
-			return nil, err
-		}
-		if err := cfg.Init(ctx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	},
-
-	middleware.WAF: func(ctx context.Context, enc []byte) (middleware.Middleware, error) {
-		cfg := &middleware.WAFConfig{}
-		if err := yaml.Unmarshal(enc, cfg); err != nil {
-			return nil, err
-		}
-		if err := cfg.Init(ctx); err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	},
-}
-
 func parseRoutesMiddleware(ctx context.Context, config *Config) error {
 	for _, routeConfig := range config.Routes {
 		routeConfig.middlewareList = routeConfig.middlewareList[:0]
 		for _, entry := range routeConfig.MiddlewareInternalRepr {
 			for mwType, mwConfig := range entry {
-				ctx := middleware.ContextWithMiddlewareType(ctx, string(mwType))
-				factory, ok := middlewareRegistry[mwType]
-				if !ok {
-					return fmt.Errorf("unknown middleware type: %s", mwType)
-				}
+				mwCtx := middleware.ContextWithMiddlewareType(ctx, string(mwType))
 				enc, err := yaml.Marshal(mwConfig)
 				if err != nil {
 					return fmt.Errorf("failed to marshal middleware config for type %s: %w", mwType, err)
 				}
-				mw, err := factory(ctx, enc)
+				mw, err := middleware.Build(mwType, mwCtx, enc)
 				if err != nil {
 					return fmt.Errorf("failed to initialize middleware %s: %w", mwType, err)
 				}

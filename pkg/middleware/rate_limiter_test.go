@@ -23,7 +23,7 @@ func newRateLimiterForTest(t *testing.T, cfg RateLimiterConfig) *RateLimiterConf
 	if err := cfg.Init(ctx); err != nil {
 		t.Fatalf("init rate limiter: %v", err)
 	}
-	t.Cleanup(cfg.Stop)
+	t.Cleanup(func() { _ = cfg.Close() })
 	return &cfg
 }
 
@@ -61,19 +61,19 @@ func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
 	req.RemoteAddr = "203.0.113.10:1234"
 
 	rr1 := httptest.NewRecorder()
-	h(rr1, req)
+	h.ServeHTTP(rr1, req)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("request 1 expected 200, got %d", rr1.Code)
 	}
 
 	rr2 := httptest.NewRecorder()
-	h(rr2, req)
+	h.ServeHTTP(rr2, req)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("request 2 expected 200, got %d", rr2.Code)
 	}
 
 	rr3 := httptest.NewRecorder()
-	h(rr3, req)
+	h.ServeHTTP(rr3, req)
 	if rr3.Code != http.StatusTooManyRequests {
 		t.Fatalf("request 3 expected 429, got %d", rr3.Code)
 	}
@@ -90,13 +90,13 @@ func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 	req.RemoteAddr = "203.0.113.11:1234"
 
 	rr1 := httptest.NewRecorder()
-	h(rr1, req)
+	h.ServeHTTP(rr1, req)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("request 1 expected 200, got %d", rr1.Code)
 	}
 
 	rr2 := httptest.NewRecorder()
-	h(rr2, req)
+	h.ServeHTTP(rr2, req)
 	if rr2.Code != http.StatusTooManyRequests {
 		t.Fatalf("request 2 expected 429, got %d", rr2.Code)
 	}
@@ -104,7 +104,7 @@ func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 
 	rr3 := httptest.NewRecorder()
-	h(rr3, req)
+	h.ServeHTTP(rr3, req)
 	if rr3.Code != http.StatusOK {
 		t.Fatalf("request 3 after timeframe expected 200, got %d", rr3.Code)
 	}
@@ -124,19 +124,19 @@ func TestRateLimiter_PerClientIsolation(t *testing.T) {
 	reqB.RemoteAddr = "198.51.100.2:2222"
 
 	rrA1 := httptest.NewRecorder()
-	h(rrA1, reqA)
+	h.ServeHTTP(rrA1, reqA)
 	if rrA1.Code != http.StatusOK {
 		t.Fatalf("client A req1 expected 200, got %d", rrA1.Code)
 	}
 
 	rrA2 := httptest.NewRecorder()
-	h(rrA2, reqA)
+	h.ServeHTTP(rrA2, reqA)
 	if rrA2.Code != http.StatusTooManyRequests {
 		t.Fatalf("client A req2 expected 429, got %d", rrA2.Code)
 	}
 
 	rrB1 := httptest.NewRecorder()
-	h(rrB1, reqB)
+	h.ServeHTTP(rrB1, reqB)
 	if rrB1.Code != http.StatusOK {
 		t.Fatalf("client B req1 expected 200, got %d", rrB1.Code)
 	}
@@ -167,7 +167,7 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 			req.RemoteAddr = "192.0.2.55:9999"
 
 			rr := httptest.NewRecorder()
-			h(rr, req)
+			h.ServeHTTP(rr, req)
 
 			switch rr.Code {
 			case http.StatusOK:
@@ -206,13 +206,13 @@ func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
 	req2.Header.Set("X-Forwarded-For", "198.51.100.88")
 
 	rr1 := httptest.NewRecorder()
-	h(rr1, req1)
+	h.ServeHTTP(rr1, req1)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("req1 expected 200, got %d", rr1.Code)
 	}
 
 	rr2 := httptest.NewRecorder()
-	h(rr2, req2)
+	h.ServeHTTP(rr2, req2)
 	// Same RemoteAddr IP, so should count against same bucket when not trusting proxy headers.
 	if rr2.Code != http.StatusTooManyRequests {
 		t.Fatalf("req2 expected 429, got %d", rr2.Code)
@@ -236,13 +236,13 @@ func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
 	req2.Header.Set("X-Forwarded-For", "198.51.100.2, 10.0.0.1")
 
 	rr1 := httptest.NewRecorder()
-	h(rr1, req1)
+	h.ServeHTTP(rr1, req1)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("req1 expected 200, got %d", rr1.Code)
 	}
 
 	rr2 := httptest.NewRecorder()
-	h(rr2, req2)
+	h.ServeHTTP(rr2, req2)
 	// Different XFF client IPs should be isolated when trust_proxy_headers is enabled.
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("req2 expected 200, got %d", rr2.Code)

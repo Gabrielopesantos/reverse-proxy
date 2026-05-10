@@ -33,8 +33,8 @@ func (ba *BasicAuthConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (ba *BasicAuthConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (ba *BasicAuthConfig) Exec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, passwd, ok := r.BasicAuth()
 		if !ok {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
@@ -47,7 +47,13 @@ func (ba *BasicAuthConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	})
+}
+
+func (ba *BasicAuthConfig) Close() error { return nil }
+
+func init() {
+	RegisterYAML(BASIC_AUTH, func() *BasicAuthConfig { return &BasicAuthConfig{} })
 }
 
 func (ba *BasicAuthConfig) compareAuthValue(user string, passwd string) bool {

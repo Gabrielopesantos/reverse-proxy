@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/config"
+	"github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/proxy"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -24,12 +25,13 @@ func (a *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type Server struct {
-	server        http.Server
-	config        *config.Config
-	logger        *slog.Logger
-	handler       *muxHandler
-	activeProxies []*proxy.Proxy
-	proxiesMu     sync.Mutex
+	server           http.Server
+	config           *config.Config
+	logger           *slog.Logger
+	handler          *muxHandler
+	activeProxies    []*proxy.Proxy
+	activeMiddleware []middleware.Middleware
+	proxiesMu        sync.Mutex
 }
 
 // Option configures a Server at construction time.
@@ -115,6 +117,7 @@ func (s *Server) applyRoutes() error {
 	routes := s.config.Snapshot()
 
 	var proxies []*proxy.Proxy
+	var allMiddleware []middleware.Middleware
 	for routePathPattern, routeConfig := range routes {
 		p, err := proxy.New(
 			routeConfig.Upstreams,
@@ -129,9 +132,11 @@ func (s *Server) applyRoutes() error {
 		}
 		proxies = append(proxies, p)
 
-		handler := http.HandlerFunc(p.ServeHTTP)
-		for i := len(routeConfig.Middleware()) - 1; i >= 0; i-- {
-			handler = routeConfig.Middleware()[i].Exec(handler.ServeHTTP)
+		var handler http.Handler = http.HandlerFunc(p.ServeHTTP)
+		mwList := routeConfig.Middleware()
+		allMiddleware = append(allMiddleware, mwList...)
+		for i := len(mwList) - 1; i >= 0; i-- {
+			handler = mwList[i].Exec(handler)
 		}
 
 		router.Handle(routePathPattern, handler)
@@ -141,12 +146,19 @@ func (s *Server) applyRoutes() error {
 	s.handler.mux.Store(router)
 
 	s.proxiesMu.Lock()
-	old := s.activeProxies
+	oldProxies := s.activeProxies
+	oldMiddleware := s.activeMiddleware
 	s.activeProxies = proxies
+	s.activeMiddleware = allMiddleware
 	s.proxiesMu.Unlock()
 
-	for _, p := range old {
+	for _, p := range oldProxies {
 		p.Stop()
+	}
+	for _, mw := range oldMiddleware {
+		if err := mw.Close(); err != nil {
+			s.logger.Warn("middleware close error", "err", err)
+		}
 	}
 
 	return nil

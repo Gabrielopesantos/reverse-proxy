@@ -118,8 +118,8 @@ func (rl *RateLimiterConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (rl *RateLimiterConfig) Exec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		clientAddr := rl.clientIP(r)
 
@@ -151,7 +151,7 @@ func (rl *RateLimiterConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
 		)
 
 		next.ServeHTTP(w, r)
-	}
+	})
 }
 
 func (rl *RateLimiterConfig) cleanupLoop() {
@@ -168,12 +168,17 @@ func (rl *RateLimiterConfig) cleanupLoop() {
 	}
 }
 
-func (rl *RateLimiterConfig) Stop() {
+func (rl *RateLimiterConfig) Close() error {
 	rl.cleanupOnce.Do(func() {
 		if rl.stopCleanup != nil {
 			close(rl.stopCleanup)
 		}
 	})
+	return nil
+}
+
+func init() {
+	RegisterYAML(RATE_LIMITER, func() *RateLimiterConfig { return &RateLimiterConfig{} })
 }
 
 func (rl *RateLimiterConfig) evictStaleClients() {

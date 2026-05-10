@@ -67,12 +67,21 @@ func (l *LoggerConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (l *LoggerConfig) Exec(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-
+func (l *LoggerConfig) Exec(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lrw := NewLoggingResponseWriter(w)
 		next.ServeHTTP(lrw, r)
-
 		l.accessLog.Info("request", "path", r.URL.Path, "method", r.Method, "status_code", lrw.statusCode)
+	})
+}
+
+func (l *LoggerConfig) Close() error {
+	if l.file != nil {
+		return l.file.Close()
 	}
+	return nil
+}
+
+func init() {
+	RegisterYAML(LOGGER, func() *LoggerConfig { return &LoggerConfig{} })
 }
