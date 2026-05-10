@@ -16,95 +16,99 @@ func init() {
 
 const (
 	DEFAULT_MAX_REQUESTS             = 100
-	DEFAULT_TIME_FRAME_SECONDS       = 20
+	DEFAULT_WINDOW_SIZE_SECONDS      = 20
 	DEFAULT_STALE_CLIENT_TTL_SECONDS = 300
 )
 
 type RateLimiter struct {
-	MaxReqs                uint `yaml:"max_requests"`
-	TimeFrameSecs          uint `yaml:"time_frame_seconds"`
-	StaleClientTTLSeconds  uint `yaml:"stale_client_ttl_seconds,omitempty"`
+	MaxRequests           uint `yaml:"max_requests"`
+	WindowSizeSeconds     uint `yaml:"window_size_seconds"`
+	StaleClientTTLSeconds uint `yaml:"stale_client_ttl_seconds,omitempty"`
+
+	// TrustProxyHeaders enables trusting the X-Forwarded-For header from the proxy.
 	TrustProxyHeaders      bool `yaml:"trust_proxy_headers,omitempty"`
 	ProxyHeaderMaxForwards int  `yaml:"proxy_header_max_forwards,omitempty"`
 
-	counter     map[string]*ClientRequestsCounter
-	counterLock sync.RWMutex
-	logger      *slog.Logger
+	counters     map[string]*clientCounter
+	countersLock sync.RWMutex
+
+	logger *slog.Logger
 
 	stopCleanup chan struct{}
 	cleanupOnce sync.Once
 }
 
-type ClientRequestsCounter struct {
-	reqsTimestamps []time.Time
-	lastSeen       time.Time
-	sync.Mutex
+// clientCounter implements a sliding window counter we
+// track per client the request count of the previous and
+// current fixed-size windows, and approximate the rolling
+// count by weighting the previous window by how far we are
+// into the current one.
+type clientCounter struct {
+	windowStart time.Time
+	prev        uint
+	curr        uint
+	lastSeen    time.Time
+	mu          sync.Mutex
 }
 
-func NewClientRequestsCounter() *ClientRequestsCounter {
-	return &ClientRequestsCounter{
-		reqsTimestamps: make([]time.Time, 0),
-		lastSeen:       time.Now(),
+func newClientCounter(now time.Time) *clientCounter {
+	return &clientCounter{
+		windowStart: now,
+		lastSeen:    now,
 	}
 }
 
-// allow performs an atomic rate-limit decision for a client:
-// prune old timestamps, check current in-window count, and append this request
-// if allowed. Returns true when request should proceed.
-func (c *ClientRequestsCounter) allow(now time.Time, timeframe time.Duration, max uint) bool {
-	c.Lock()
-	defer c.Unlock()
+// allow rolls the windows to `now`, computes the weighted estimate, and
+// increments the current-window counter when admission is granted.
+func (c *clientCounter) allow(now time.Time, window time.Duration, max uint) (bool, uint) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	windowStart := now.Add(-timeframe)
+	c.roll(now, window)
 
-	// Prune old entries.
-	pruneIdx := 0
-	for pruneIdx < len(c.reqsTimestamps) && c.reqsTimestamps[pruneIdx].Before(windowStart) {
-		pruneIdx++
+	elapsed := now.Sub(c.windowStart)
+	if elapsed < 0 {
+		elapsed = 0
 	}
-	if pruneIdx > 0 {
-		c.reqsTimestamps = c.reqsTimestamps[pruneIdx:]
-	}
+	weight := 1 - float64(elapsed)/float64(window)
+	estimated := uint(float64(c.prev)*weight) + c.curr
 
-	if uint(len(c.reqsTimestamps)) >= max {
-		c.lastSeen = now
-		return false
-	}
-
-	c.reqsTimestamps = append(c.reqsTimestamps, now)
 	c.lastSeen = now
-	return true
+	if estimated >= max {
+		return false, estimated
+	}
+	c.curr++
+	return true, estimated + 1
 }
 
-func (c *ClientRequestsCounter) inWindow(now time.Time, timeframe time.Duration) int {
-	c.Lock()
-	defer c.Unlock()
-
-	windowStart := now.Add(-timeframe)
-	pruneIdx := 0
-	for pruneIdx < len(c.reqsTimestamps) && c.reqsTimestamps[pruneIdx].Before(windowStart) {
-		pruneIdx++
+func (c *clientCounter) roll(now time.Time, window time.Duration) {
+	delta := now.Sub(c.windowStart)
+	switch {
+	case delta >= 2*window:
+		c.prev = 0
+		c.curr = 0
+		c.windowStart = now
+	case delta >= window:
+		c.prev = c.curr
+		c.curr = 0
+		c.windowStart = c.windowStart.Add(window)
 	}
-	if pruneIdx > 0 {
-		c.reqsTimestamps = c.reqsTimestamps[pruneIdx:]
-	}
-	return len(c.reqsTimestamps)
 }
 
-func (c *ClientRequestsCounter) isStale(now time.Time, ttl time.Duration) bool {
-	c.Lock()
-	defer c.Unlock()
+func (c *clientCounter) isStale(now time.Time, ttl time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return now.Sub(c.lastSeen) > ttl
 }
 
 func (rl *RateLimiter) Init(ctx context.Context) error {
 	rl.logger = LoggerFromContext(ctx)
 
-	if rl.MaxReqs == 0 {
-		rl.MaxReqs = DEFAULT_MAX_REQUESTS
+	if rl.MaxRequests == 0 {
+		rl.MaxRequests = DEFAULT_MAX_REQUESTS
 	}
-	if rl.TimeFrameSecs == 0 {
-		rl.TimeFrameSecs = DEFAULT_TIME_FRAME_SECONDS
+	if rl.WindowSizeSeconds == 0 {
+		rl.WindowSizeSeconds = DEFAULT_WINDOW_SIZE_SECONDS
 	}
 	if rl.StaleClientTTLSeconds == 0 {
 		rl.StaleClientTTLSeconds = DEFAULT_STALE_CLIENT_TTL_SECONDS
@@ -113,9 +117,8 @@ func (rl *RateLimiter) Init(ctx context.Context) error {
 		rl.ProxyHeaderMaxForwards = 5
 	}
 
-	rl.counter = make(map[string]*ClientRequestsCounter)
+	rl.counters = make(map[string]*clientCounter)
 
-	// Best-effort background cleanup to prevent unbounded growth.
 	rl.stopCleanup = make(chan struct{})
 	go rl.cleanupLoop()
 
@@ -127,12 +130,11 @@ func (rl *RateLimiter) Exec(next http.Handler) http.Handler {
 		now := time.Now()
 		clientAddr := rl.clientIP(r)
 
-		clientCounter := rl.getOrCreateClientCounter(clientAddr)
+		window := time.Duration(rl.WindowSizeSeconds) * time.Second
+		counter := rl.getOrCreateClientCounter(clientAddr, now)
 
-		timeframe := time.Duration(rl.TimeFrameSecs) * time.Second
-		allowed := clientCounter.allow(now, timeframe, rl.MaxReqs)
-		inWindow := clientCounter.inWindow(now, timeframe)
-		rl.logger.Debug("request", "client_addr", clientAddr, "allowed", allowed, "in_window", inWindow)
+		allowed, estimated := counter.allow(now, window, rl.MaxRequests)
+		rl.logger.Debug("request", "client_addr", clientAddr, "allowed", allowed, "estimated", estimated)
 		if !allowed {
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
@@ -169,35 +171,34 @@ func (rl *RateLimiter) evictStaleClients() {
 	now := time.Now()
 	ttl := time.Duration(rl.StaleClientTTLSeconds) * time.Second
 
-	rl.counterLock.Lock()
-	defer rl.counterLock.Unlock()
+	rl.countersLock.Lock()
+	defer rl.countersLock.Unlock()
 
-	for client, counter := range rl.counter {
+	for client, counter := range rl.counters {
 		if counter.isStale(now, ttl) {
-			delete(rl.counter, client)
+			delete(rl.counters, client)
 		}
 	}
 }
 
-func (rl *RateLimiter) getOrCreateClientCounter(clientAddr string) *ClientRequestsCounter {
-	rl.counterLock.RLock()
-	clientCounter, exists := rl.counter[clientAddr]
-	rl.counterLock.RUnlock()
+func (rl *RateLimiter) getOrCreateClientCounter(clientAddr string, now time.Time) *clientCounter {
+	rl.countersLock.RLock()
+	c, exists := rl.counters[clientAddr]
+	rl.countersLock.RUnlock()
 	if exists {
-		return clientCounter
+		return c
 	}
 
-	rl.counterLock.Lock()
-	defer rl.counterLock.Unlock()
+	rl.countersLock.Lock()
+	defer rl.countersLock.Unlock()
 
-	// Double-check after taking write lock.
-	if clientCounter, exists = rl.counter[clientAddr]; exists {
-		return clientCounter
+	if c, exists = rl.counters[clientAddr]; exists {
+		return c
 	}
 
-	clientCounter = NewClientRequestsCounter()
-	rl.counter[clientAddr] = clientCounter
-	return clientCounter
+	c = newClientCounter(now)
+	rl.counters[clientAddr] = c
+	return c
 }
 
 func (rl *RateLimiter) clientIP(r *http.Request) string {
@@ -222,7 +223,6 @@ func parseClientIPFromHeaders(r *http.Request, maxForwards int) string {
 			if candidate == "" {
 				continue
 			}
-			// Handle potential host:port formats conservatively.
 			if host, _, err := net.SplitHostPort(candidate); err == nil {
 				candidate = host
 			}

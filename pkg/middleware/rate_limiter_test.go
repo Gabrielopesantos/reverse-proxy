@@ -36,11 +36,11 @@ func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
 	rl := RateLimiter{}
 	initRateLimiterForTest(t, &rl)
 
-	if rl.MaxReqs != DEFAULT_MAX_REQUESTS {
-		t.Fatalf("expected default max requests %d, got %d", DEFAULT_MAX_REQUESTS, rl.MaxReqs)
+	if rl.MaxRequests != DEFAULT_MAX_REQUESTS {
+		t.Fatalf("expected default max requests %d, got %d", DEFAULT_MAX_REQUESTS, rl.MaxRequests)
 	}
-	if rl.TimeFrameSecs != DEFAULT_TIME_FRAME_SECONDS {
-		t.Fatalf("expected default timeframe %d, got %d", DEFAULT_TIME_FRAME_SECONDS, rl.TimeFrameSecs)
+	if rl.WindowSizeSeconds != DEFAULT_WINDOW_SIZE_SECONDS {
+		t.Fatalf("expected default timeframe %d, got %d", DEFAULT_WINDOW_SIZE_SECONDS, rl.WindowSizeSeconds)
 	}
 	if rl.StaleClientTTLSeconds != DEFAULT_STALE_CLIENT_TTL_SECONDS {
 		t.Fatalf("expected default stale ttl %d, got %d", DEFAULT_STALE_CLIENT_TTL_SECONDS, rl.StaleClientTTLSeconds)
@@ -52,8 +52,8 @@ func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
 
 func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
 	rl := RateLimiter{
-		MaxReqs:       2,
-		TimeFrameSecs: 1,
+		MaxRequests:       2,
+		WindowSizeSeconds: 1,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -82,8 +82,8 @@ func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
 
 func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 	rl := RateLimiter{
-		MaxReqs:       1,
-		TimeFrameSecs: 1,
+		MaxRequests:       1,
+		WindowSizeSeconds: 1,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -114,8 +114,8 @@ func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 
 func TestRateLimiter_PerClientIsolation(t *testing.T) {
 	rl := RateLimiter{
-		MaxReqs:       1,
-		TimeFrameSecs: 2,
+		MaxRequests:       1,
+		WindowSizeSeconds: 2,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -152,8 +152,8 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 	)
 
 	rl := RateLimiter{
-		MaxReqs:       maxReqs,
-		TimeFrameSecs: 2,
+		MaxRequests:       maxReqs,
+		WindowSizeSeconds: 2,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -196,8 +196,8 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 
 func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
 	rl := RateLimiter{
-		MaxReqs:       1,
-		TimeFrameSecs: 2,
+		MaxRequests:       1,
+		WindowSizeSeconds: 2,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -226,8 +226,8 @@ func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
 
 func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
 	rl := RateLimiter{
-		MaxReqs:           1,
-		TimeFrameSecs:     2,
+		MaxRequests:       1,
+		WindowSizeSeconds: 2,
 		TrustProxyHeaders: true,
 	}
 	initRateLimiterForTest(t, &rl)
@@ -257,35 +257,96 @@ func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
 
 func TestRateLimiter_EvictsStaleClients(t *testing.T) {
 	rl := RateLimiter{
-		MaxReqs:               2,
-		TimeFrameSecs:         2,
+		MaxRequests:           2,
+		WindowSizeSeconds:     2,
 		StaleClientTTLSeconds: 1,
 	}
 	initRateLimiterForTest(t, &rl)
 
 	// Seed two clients.
-	rl.counterLock.Lock()
-	rl.counter["client-old"] = &ClientRequestsCounter{
-		reqsTimestamps: []time.Time{time.Now().Add(-10 * time.Second)},
-		lastSeen:       time.Now().Add(-10 * time.Second),
+	rl.countersLock.Lock()
+	rl.counters["client-old"] = &clientCounter{
+		windowStart: time.Now().Add(-10 * time.Second),
+		lastSeen:    time.Now().Add(-10 * time.Second),
 	}
-	rl.counter["client-fresh"] = &ClientRequestsCounter{
-		reqsTimestamps: []time.Time{time.Now()},
-		lastSeen:       time.Now(),
+	rl.counters["client-fresh"] = &clientCounter{
+		windowStart: time.Now(),
+		lastSeen:    time.Now(),
 	}
-	rl.counterLock.Unlock()
+	rl.countersLock.Unlock()
 
 	rl.evictStaleClients()
 
-	rl.counterLock.RLock()
-	_, oldExists := rl.counter["client-old"]
-	_, freshExists := rl.counter["client-fresh"]
-	rl.counterLock.RUnlock()
+	rl.countersLock.RLock()
+	_, oldExists := rl.counters["client-old"]
+	_, freshExists := rl.counters["client-fresh"]
+	rl.countersLock.RUnlock()
 
 	if oldExists {
 		t.Fatalf("expected stale client to be evicted")
 	}
 	if !freshExists {
 		t.Fatalf("expected fresh client to remain")
+	}
+}
+
+// TestRateLimiter_PrevWindowWeighting verifies that, after the first window
+// fills up, the second window admits a number of requests proportional to how
+// far we are into it (i.e. the previous window's count is weighted down by the
+// fraction of the current window already elapsed).
+func TestRateLimiter_PrevWindowWeighting(t *testing.T) {
+	const (
+		maxReqs = 10
+		window  = 1 * time.Second
+	)
+
+	rl := RateLimiter{
+		MaxRequests:       maxReqs,
+		WindowSizeSeconds: uint(window / time.Second),
+	}
+	initRateLimiterForTest(t, &rl)
+	h := rl.Exec(okHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.42:1234"
+
+	// Fill window 1.
+	for i := range maxReqs {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("W1 req %d expected 200, got %d", i+1, rr.Code)
+		}
+	}
+
+	// Confirm the next request in window 1 is blocked.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("W1 over-limit expected 429, got %d", rr.Code)
+	}
+
+	// Land roughly halfway into window 2 so the weighted prev count is ~5,
+	// leaving room for ~5 more before the rolling estimate hits the limit.
+	time.Sleep(window + window/2)
+
+	var allowedW2 int
+	for range maxReqs * 2 {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		switch rr.Code {
+		case http.StatusOK:
+			allowedW2++
+		case http.StatusTooManyRequests:
+			// Expected once the weighted estimate catches up.
+		default:
+			t.Fatalf("unexpected status %d in W2", rr.Code)
+		}
+	}
+
+	// Allow generous bounds for sleep jitter; the point is that admissions are
+	// neither full (max) nor zero, but proportional to remaining capacity.
+	if allowedW2 < 3 || allowedW2 > 7 {
+		t.Fatalf("expected ~5 admissions into W2, got %d", allowedW2)
 	}
 }

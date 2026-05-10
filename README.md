@@ -101,7 +101,7 @@ routes:
           mode: text # "text" | "json"
       - rate_limiter:
           max_requests: 100
-          time_frame_seconds: 60
+          window_size_seconds: 60
           stale_client_ttl_seconds: 300
           trust_proxy_headers: false
           proxy_header_max_forwards: 5
@@ -133,7 +133,7 @@ For a working example see [`examples/config.yaml`](./examples/config.yaml).
 | `logger` | `stream` | `stdout`, `stderr`, or a file path |
 | `logger` | `mode` | `text` or `json` |
 | `rate_limiter` | `max_requests` | Maximum requests allowed in the window |
-| `rate_limiter` | `time_frame_seconds` | Sliding window size in seconds |
+| `rate_limiter` | `window_size_seconds` | Sliding window size in seconds |
 | `rate_limiter` | `stale_client_ttl_seconds` | Eviction TTL for inactive client buckets |
 | `rate_limiter` | `trust_proxy_headers` | If `true`, derive client IP from `X-Forwarded-For`/`X-Real-IP` |
 | `rate_limiter` | `proxy_header_max_forwards` | Max XFF entries to inspect |

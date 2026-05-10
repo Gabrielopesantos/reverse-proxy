@@ -12,7 +12,7 @@ routes:
           mode: text
       - rate_limiter:
           max_requests: 4
-          time_frame_seconds: 30
+          window_size_seconds: 30
 
   /second:
     upstreams: ["http://127.0.0.1:8083", "http://127.0.0.1:8085"]
@@ -24,7 +24,7 @@ routes:
           mode: text
       - rate_limiter:
           max_requests: 2
-          time_frame_seconds: 60
+          window_size_seconds: 60
       - basic_auth:
           file: ./examples/basic_auth
       - cache_control:
