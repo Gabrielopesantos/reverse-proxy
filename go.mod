@@ -2,10 +2,7 @@ module github.com/gabrielopesantos/reverse-proxy
 
 go 1.26.2
 
-require (
-	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
-	gopkg.in/yaml.v3 v3.0.1
-)
+require gopkg.in/yaml.v3 v3.0.1
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0

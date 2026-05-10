@@ -2,15 +2,13 @@ package utilities
 
 import (
 	"sync"
-
-	"golang.org/x/exp/maps"
 )
 
 type void struct{}
 
 type Set[T comparable] struct {
-	sync.Mutex
 	items map[T]void
+	mu    sync.Mutex
 }
 
 func NewSet[T comparable]() *Set[T] {
@@ -20,8 +18,8 @@ func NewSet[T comparable]() *Set[T] {
 }
 
 func (s *Set[T]) Add(item T) {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	_, inserted := s.items[item]
 	if inserted {
@@ -32,29 +30,31 @@ func (s *Set[T]) Add(item T) {
 }
 
 func (s *Set[T]) Remove(item T) {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	delete(s.items, item)
 }
 
 func (s *Set[T]) Has(item T) bool {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	_, added := s.items[item]
 	return added
 }
 
 func (s *Set[T]) Len() int {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	return len(s.items)
 }
 
 func (s *Set[T]) Clear() {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-	maps.Clear(s.items)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.items {
+		delete(s.items, k)
+	}
 }

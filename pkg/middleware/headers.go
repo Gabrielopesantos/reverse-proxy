@@ -78,7 +78,7 @@ func (h *headerModifyWriter) applyOnce() {
 		return
 	}
 	h.applied = true
-	applyHeaderRules(h.ResponseWriter.Header(), h.rules)
+	applyHeaderRules(h.Header(), h.rules)
 }
 
 func (h *headerModifyWriter) WriteHeader(code int) {
