@@ -14,7 +14,11 @@ import (
 	utils "github.com/gabrielopesantos/reverse-proxy/pkg/utilities/cache"
 )
 
-type CacheControlConfig struct {
+func init() {
+	RegisterYAML(CACHE_CONTROL, func() *CacheControl { return &CacheControl{} })
+}
+
+type CacheControl struct {
 	Duration     string `yaml:"duration"`
 	durationTime time.Duration
 
@@ -24,7 +28,7 @@ type CacheControlConfig struct {
 	logger *slog.Logger
 }
 
-func (cc *CacheControlConfig) Init(ctx context.Context) error {
+func (cc *CacheControl) Init(ctx context.Context) error {
 	cc.logger = LoggerFromContext(ctx)
 	timeDuration, err := time.ParseDuration(cc.Duration)
 	if err != nil {
@@ -41,7 +45,7 @@ func (cc *CacheControlConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (cc *CacheControlConfig) Exec(next http.Handler) http.Handler {
+func (cc *CacheControl) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only cache GET/HEAD responses.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -91,11 +95,7 @@ func (cc *CacheControlConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (cc *CacheControlConfig) Close() error { return nil }
-
-func init() {
-	RegisterYAML(CACHE_CONTROL, func() *CacheControlConfig { return &CacheControlConfig{} })
-}
+func (cc *CacheControl) Close() error { return nil }
 
 func writeCachedResponse(w http.ResponseWriter, cached *utils.CachedResponse) {
 	for key, vals := range cached.Headers {

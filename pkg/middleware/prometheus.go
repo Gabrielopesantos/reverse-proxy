@@ -11,13 +11,17 @@ import (
 	"github.com/gabrielopesantos/reverse-proxy/pkg/metrics"
 )
 
-// PrometheusConfig is middleware that records per-route request metrics.
-type PrometheusConfig struct {
+func init() {
+	RegisterYAML(PROMETHEUS, func() *Prometheus { return &Prometheus{} })
+}
+
+// Prometheus is middleware that records per-route request metrics.
+type Prometheus struct {
 	Route  string `yaml:"route"`
 	logger *slog.Logger
 }
 
-func (p *PrometheusConfig) Init(ctx context.Context) error {
+func (p *Prometheus) Init(ctx context.Context) error {
 	p.logger = LoggerFromContext(ctx)
 	if p.Route == "" {
 		return fmt.Errorf("prometheus middleware requires a non-empty route label")
@@ -25,7 +29,7 @@ func (p *PrometheusConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (p *PrometheusConfig) Exec(next http.Handler) http.Handler {
+func (p *Prometheus) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		lrw := NewLoggingResponseWriter(w)
@@ -45,8 +49,4 @@ func (p *PrometheusConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (p *PrometheusConfig) Close() error { return nil }
-
-func init() {
-	RegisterYAML(PROMETHEUS, func() *PrometheusConfig { return &PrometheusConfig{} })
-}
+func (p *Prometheus) Close() error { return nil }

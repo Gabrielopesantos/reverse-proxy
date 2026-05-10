@@ -9,6 +9,10 @@ import (
 	"os"
 )
 
+func init() {
+	RegisterYAML(LOGGER, func() *Logger { return &Logger{} })
+}
+
 type StreamType string
 
 const (
@@ -24,7 +28,7 @@ const (
 	LoggerModeText LoggerMode = "text"
 )
 
-type LoggerConfig struct {
+type Logger struct {
 	Stream    StreamType `yaml:"stream"`
 	Mode      LoggerMode `yaml:"mode"`
 	accessLog *slog.Logger
@@ -32,7 +36,7 @@ type LoggerConfig struct {
 	file      *os.File
 }
 
-func (l *LoggerConfig) Init(ctx context.Context) error {
+func (l *Logger) Init(ctx context.Context) error {
 	l.logger = LoggerFromContext(ctx)
 
 	var writer io.Writer
@@ -67,7 +71,7 @@ func (l *LoggerConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (l *LoggerConfig) Exec(next http.Handler) http.Handler {
+func (l *Logger) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lrw := NewLoggingResponseWriter(w)
 		next.ServeHTTP(lrw, r)
@@ -75,13 +79,9 @@ func (l *LoggerConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (l *LoggerConfig) Close() error {
+func (l *Logger) Close() error {
 	if l.file != nil {
 		return l.file.Close()
 	}
 	return nil
-}
-
-func init() {
-	RegisterYAML(LOGGER, func() *LoggerConfig { return &LoggerConfig{} })
 }

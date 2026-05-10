@@ -7,9 +7,13 @@ import (
 	"regexp"
 )
 
-// RewriteConfig rewrites the request path before forwarding to the upstream.
+func init() {
+	RegisterYAML(REWRITE, func() *Rewrite { return &Rewrite{} })
+}
+
+// Rewrite rewrites the request path before forwarding to the upstream.
 // Rules are evaluated in order; the first match wins.
-type RewriteConfig struct {
+type Rewrite struct {
 	Rules    []RewriteRule `yaml:"rules"`
 	compiled []*compiledRewriteRule
 }
@@ -26,7 +30,7 @@ type compiledRewriteRule struct {
 	replace string
 }
 
-func (rw *RewriteConfig) Init(_ context.Context) error {
+func (rw *Rewrite) Init(_ context.Context) error {
 	for _, r := range rw.Rules {
 		re, err := regexp.Compile(r.Match)
 		if err != nil {
@@ -37,7 +41,7 @@ func (rw *RewriteConfig) Init(_ context.Context) error {
 	return nil
 }
 
-func (rw *RewriteConfig) Exec(next http.Handler) http.Handler {
+func (rw *Rewrite) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, rule := range rw.compiled {
 			if rule.re.MatchString(r.URL.Path) {
@@ -52,8 +56,4 @@ func (rw *RewriteConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (rw *RewriteConfig) Close() error { return nil }
-
-func init() {
-	RegisterYAML(REWRITE, func() *RewriteConfig { return &RewriteConfig{} })
-}
+func (rw *Rewrite) Close() error { return nil }

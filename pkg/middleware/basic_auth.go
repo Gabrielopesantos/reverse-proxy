@@ -12,16 +12,20 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func init() {
+	RegisterYAML(BASIC_AUTH, func() *BasicAuth { return &BasicAuth{} })
+}
+
 const BASIC_AUTH_ROW_DELIMITER = "\n"
 
-type BasicAuthConfig struct {
+type BasicAuth struct {
 	File string `yaml:"file"`
 
 	encodedAuthRows []string
 	logger          *slog.Logger
 }
 
-func (ba *BasicAuthConfig) Init(ctx context.Context) error {
+func (ba *BasicAuth) Init(ctx context.Context) error {
 	ba.logger = LoggerFromContext(ctx)
 	data, err := os.ReadFile(ba.File)
 	if err != nil {
@@ -33,7 +37,7 @@ func (ba *BasicAuthConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (ba *BasicAuthConfig) Exec(next http.Handler) http.Handler {
+func (ba *BasicAuth) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, passwd, ok := r.BasicAuth()
 		if !ok {
@@ -50,13 +54,9 @@ func (ba *BasicAuthConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (ba *BasicAuthConfig) Close() error { return nil }
+func (ba *BasicAuth) Close() error { return nil }
 
-func init() {
-	RegisterYAML(BASIC_AUTH, func() *BasicAuthConfig { return &BasicAuthConfig{} })
-}
-
-func (ba *BasicAuthConfig) compareAuthValue(user string, passwd string) bool {
+func (ba *BasicAuth) compareAuthValue(user string, passwd string) bool {
 	for _, authRow := range ba.encodedAuthRows {
 		authRowSplit := strings.Split(authRow, ":")
 		if len(authRowSplit) != 2 {

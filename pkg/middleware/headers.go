@@ -5,10 +5,14 @@ import (
 	"net/http"
 )
 
-// HeadersConfig manipulates request and/or response headers.
+func init() {
+	RegisterYAML(HEADERS, func() *Headers { return &Headers{} })
+}
+
+// Headers manipulates request and/or response headers.
 // Rules under "request" apply before the upstream call; rules under "response"
 // apply before the response is written back to the client.
-type HeadersConfig struct {
+type Headers struct {
 	Request  HeaderRules `yaml:"request"`
 	Response HeaderRules `yaml:"response"`
 }
@@ -23,9 +27,9 @@ type HeaderRules struct {
 	Remove []string `yaml:"remove"`
 }
 
-func (h *HeadersConfig) Init(_ context.Context) error { return nil }
+func (h *Headers) Init(_ context.Context) error { return nil }
 
-func (h *HeadersConfig) Exec(next http.Handler) http.Handler {
+func (h *Headers) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Mutate request headers on a clone so the original is not modified.
 		r2 := r.Clone(r.Context())
@@ -39,7 +43,7 @@ func (h *HeadersConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (h *HeadersConfig) Close() error { return nil }
+func (h *Headers) Close() error { return nil }
 
 func applyHeaderRules(hdr http.Header, rules HeaderRules) {
 	for k, v := range rules.Set {
@@ -79,8 +83,4 @@ func (h *headerModifyWriter) WriteHeader(code int) {
 func (h *headerModifyWriter) Write(b []byte) (int, error) {
 	h.applyOnce()
 	return h.ResponseWriter.Write(b)
-}
-
-func init() {
-	RegisterYAML(HEADERS, func() *HeadersConfig { return &HeadersConfig{} })
 }

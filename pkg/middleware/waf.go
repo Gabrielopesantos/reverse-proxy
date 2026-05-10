@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+func init() {
+	RegisterYAML(WAF, func() *WAFMiddleware { return &WAFMiddleware{} })
+}
+
 const defaultMaxBodyBytes = 65536
 
 type WAFMode string
@@ -20,9 +24,9 @@ const (
 	WAFModeLog   WAFMode = "log"
 )
 
-// WAFConfig implements a Web Application Firewall middleware that inspects
+// WAFMiddleware implements a Web Application Firewall middleware that inspects
 // requests for common attack patterns.
-type WAFConfig struct {
+type WAFMiddleware struct {
 	Mode         WAFMode  `yaml:"mode"`           // "block" (default) | "log"
 	Rules        []string `yaml:"rules"`          // which built-in rule sets to enable; empty = all
 	MaxBodyBytes int64    `yaml:"max_body_bytes"` // max bytes of body to inspect; default 65536
@@ -43,7 +47,7 @@ var builtinRuleSets = map[string]string{
 	"command_injection": "(?i)[|;&`]|\\$\\([^)]+\\)",
 }
 
-func (w *WAFConfig) Init(ctx context.Context) error {
+func (w *WAFMiddleware) Init(ctx context.Context) error {
 	w.logger = LoggerFromContext(ctx)
 
 	if w.MaxBodyBytes == 0 {
@@ -75,7 +79,7 @@ func (w *WAFConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (w *WAFConfig) Exec(next http.Handler) http.Handler {
+func (w *WAFMiddleware) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if matched, rule, field := w.scan(r); matched {
 			w.logger.Warn("suspicious request", "rule", rule, "field", field, "path", r.URL.Path, "ip", clientIP(r))
@@ -88,13 +92,9 @@ func (w *WAFConfig) Exec(next http.Handler) http.Handler {
 	})
 }
 
-func (w *WAFConfig) Close() error { return nil }
+func (w *WAFMiddleware) Close() error { return nil }
 
-func init() {
-	RegisterYAML(WAF, func() *WAFConfig { return &WAFConfig{} })
-}
-
-func (w *WAFConfig) scan(r *http.Request) (matched bool, ruleName, field string) {
+func (w *WAFMiddleware) scan(r *http.Request) (matched bool, ruleName, field string) {
 	// 1. URL path + query
 	target := r.URL.RawPath + "?" + r.URL.RawQuery
 	if target == "?" {
@@ -129,7 +129,7 @@ func (w *WAFConfig) scan(r *http.Request) (matched bool, ruleName, field string)
 	return false, "", ""
 }
 
-func (w *WAFConfig) matchAny(s string) string {
+func (w *WAFMiddleware) matchAny(s string) string {
 	for _, cr := range w.compiled {
 		if cr.re.MatchString(s) {
 			return cr.name

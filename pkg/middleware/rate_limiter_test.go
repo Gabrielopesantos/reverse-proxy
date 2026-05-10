@@ -16,7 +16,7 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newRateLimiterForTest(t *testing.T, cfg RateLimiterConfig) *RateLimiterConfig {
+func initRateLimiterForTest(t *testing.T, cfg *RateLimiter) {
 	t.Helper()
 
 	ctx := ContextWithLogger(context.Background(), testLogger())
@@ -24,7 +24,6 @@ func newRateLimiterForTest(t *testing.T, cfg RateLimiterConfig) *RateLimiterConf
 		t.Fatalf("init rate limiter: %v", err)
 	}
 	t.Cleanup(func() { _ = cfg.Close() })
-	return &cfg
 }
 
 func okHandler() http.HandlerFunc {
@@ -34,7 +33,8 @@ func okHandler() http.HandlerFunc {
 }
 
 func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{})
+	rl := RateLimiter{}
+	initRateLimiterForTest(t, &rl)
 
 	if rl.MaxReqs != DEFAULT_MAX_REQUESTS {
 		t.Fatalf("expected default max requests %d, got %d", DEFAULT_MAX_REQUESTS, rl.MaxReqs)
@@ -51,10 +51,11 @@ func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
 }
 
 func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:       2,
 		TimeFrameSecs: 1,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -80,10 +81,11 @@ func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
 }
 
 func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:       1,
 		TimeFrameSecs: 1,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -111,10 +113,11 @@ func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 }
 
 func TestRateLimiter_PerClientIsolation(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:       1,
 		TimeFrameSecs: 2,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
 
 	reqA := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -148,10 +151,11 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 		totalWorkers = 200
 	)
 
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:       maxReqs,
 		TimeFrameSecs: 2,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
 
 	var okCount int64
@@ -159,7 +163,7 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(totalWorkers)
 
-	for i := 0; i < totalWorkers; i++ {
+	for range totalWorkers {
 		go func() {
 			defer wg.Done()
 
@@ -191,10 +195,11 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 }
 
 func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:       1,
 		TimeFrameSecs: 2,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
 
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -220,11 +225,12 @@ func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
 }
 
 func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:           1,
 		TimeFrameSecs:     2,
 		TrustProxyHeaders: true,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
 
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -250,11 +256,12 @@ func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
 }
 
 func TestRateLimiter_EvictsStaleClients(t *testing.T) {
-	rl := newRateLimiterForTest(t, RateLimiterConfig{
+	rl := RateLimiter{
 		MaxReqs:               2,
 		TimeFrameSecs:         2,
 		StaleClientTTLSeconds: 1,
-	})
+	}
+	initRateLimiterForTest(t, &rl)
 
 	// Seed two clients.
 	rl.counterLock.Lock()

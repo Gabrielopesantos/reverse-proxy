@@ -10,13 +10,17 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterYAML(RATE_LIMITER, func() *RateLimiter { return &RateLimiter{} })
+}
+
 const (
 	DEFAULT_MAX_REQUESTS             = 100
 	DEFAULT_TIME_FRAME_SECONDS       = 20
 	DEFAULT_STALE_CLIENT_TTL_SECONDS = 300
 )
 
-type RateLimiterConfig struct {
+type RateLimiter struct {
 	MaxReqs                uint `yaml:"max_requests"`
 	TimeFrameSecs          uint `yaml:"time_frame_seconds"`
 	StaleClientTTLSeconds  uint `yaml:"stale_client_ttl_seconds,omitempty"`
@@ -93,7 +97,7 @@ func (c *ClientRequestsCounter) isStale(now time.Time, ttl time.Duration) bool {
 	return now.Sub(c.lastSeen) > ttl
 }
 
-func (rl *RateLimiterConfig) Init(ctx context.Context) error {
+func (rl *RateLimiter) Init(ctx context.Context) error {
 	rl.logger = LoggerFromContext(ctx)
 
 	if rl.MaxReqs == 0 {
@@ -118,43 +122,27 @@ func (rl *RateLimiterConfig) Init(ctx context.Context) error {
 	return nil
 }
 
-func (rl *RateLimiterConfig) Exec(next http.Handler) http.Handler {
+func (rl *RateLimiter) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		clientAddr := rl.clientIP(r)
 
 		clientCounter := rl.getOrCreateClientCounter(clientAddr)
 
-		allowed := clientCounter.allow(now, time.Duration(rl.TimeFrameSecs)*time.Second, rl.MaxReqs)
+		timeframe := time.Duration(rl.TimeFrameSecs) * time.Second
+		allowed := clientCounter.allow(now, timeframe, rl.MaxReqs)
+		inWindow := clientCounter.inWindow(now, timeframe)
+		rl.logger.Debug("request", "client_addr", clientAddr, "allowed", allowed, "in_window", inWindow)
 		if !allowed {
-			inWindow := clientCounter.inWindow(now, time.Duration(rl.TimeFrameSecs)*time.Second)
-			rl.logger.Debug(
-				"rate_limiter_blocked",
-				"client_addr", clientAddr,
-				"allowed", false,
-				"in_window", inWindow,
-				"max_requests", rl.MaxReqs,
-				"time_frame_seconds", rl.TimeFrameSecs,
-			)
 			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 			return
 		}
-
-		inWindow := clientCounter.inWindow(now, time.Duration(rl.TimeFrameSecs)*time.Second)
-		rl.logger.Debug(
-			"rate_limiter_allowed",
-			"client_addr", clientAddr,
-			"allowed", true,
-			"in_window", inWindow,
-			"max_requests", rl.MaxReqs,
-			"time_frame_seconds", rl.TimeFrameSecs,
-		)
 
 		next.ServeHTTP(w, r)
 	})
 }
 
-func (rl *RateLimiterConfig) cleanupLoop() {
+func (rl *RateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(time.Duration(rl.StaleClientTTLSeconds) * time.Second)
 	defer ticker.Stop()
 
@@ -168,7 +156,7 @@ func (rl *RateLimiterConfig) cleanupLoop() {
 	}
 }
 
-func (rl *RateLimiterConfig) Close() error {
+func (rl *RateLimiter) Close() error {
 	rl.cleanupOnce.Do(func() {
 		if rl.stopCleanup != nil {
 			close(rl.stopCleanup)
@@ -177,11 +165,7 @@ func (rl *RateLimiterConfig) Close() error {
 	return nil
 }
 
-func init() {
-	RegisterYAML(RATE_LIMITER, func() *RateLimiterConfig { return &RateLimiterConfig{} })
-}
-
-func (rl *RateLimiterConfig) evictStaleClients() {
+func (rl *RateLimiter) evictStaleClients() {
 	now := time.Now()
 	ttl := time.Duration(rl.StaleClientTTLSeconds) * time.Second
 
@@ -195,7 +179,7 @@ func (rl *RateLimiterConfig) evictStaleClients() {
 	}
 }
 
-func (rl *RateLimiterConfig) getOrCreateClientCounter(clientAddr string) *ClientRequestsCounter {
+func (rl *RateLimiter) getOrCreateClientCounter(clientAddr string) *ClientRequestsCounter {
 	rl.counterLock.RLock()
 	clientCounter, exists := rl.counter[clientAddr]
 	rl.counterLock.RUnlock()
@@ -216,7 +200,7 @@ func (rl *RateLimiterConfig) getOrCreateClientCounter(clientAddr string) *Client
 	return clientCounter
 }
 
-func (rl *RateLimiterConfig) clientIP(r *http.Request) string {
+func (rl *RateLimiter) clientIP(r *http.Request) string {
 	if rl.TrustProxyHeaders {
 		if ip := parseClientIPFromHeaders(r, rl.ProxyHeaderMaxForwards); ip != "" {
 			return ip
