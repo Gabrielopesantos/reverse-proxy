@@ -88,6 +88,8 @@ func buildUpstreams(upstreams []string) (map[string]*httputil.ReverseProxy, map[
 		target := upstreamURL // capture for closure
 		reverseProxy := httputil.NewSingleHostReverseProxy(target)
 		reverseProxy.Transport = proxyTransport
+		// NOTE: Director needs to be explicity set as nil otherwise proxy complains
+		reverseProxy.Director = nil
 		reverseProxy.Rewrite = func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
 			injectForwardedHeaders(req)
