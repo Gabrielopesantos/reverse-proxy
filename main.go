@@ -49,6 +49,7 @@ func main() {
 	srvOpts := []server.Option{
 		server.WithLogger(logger),
 		server.WithAddress(boostrapCfg.ListenAddr),
+		server.WithAdminAddress(boostrapCfg.AdminAddr),
 		server.WithReadTimeout(boostrapCfg.ReadTimeout),
 	}
 	if boostrapCfg.TLSCertFile != "" {
@@ -61,6 +62,7 @@ func main() {
 		"config_path", boostrapCfg.ConfigPath,
 		"reload_interval", boostrapCfg.ReloadInterval.String(),
 		"listen_addr", boostrapCfg.ListenAddr,
+		"admin_addr", boostrapCfg.AdminAddr,
 		"tls", boostrapCfg.TLSCertFile != "",
 		"log_level", boostrapCfg.LogLevel,
 		"log_format", boostrapCfg.LogFormat,

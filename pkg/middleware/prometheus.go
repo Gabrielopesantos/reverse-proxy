@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gabrielopesantos/reverse-proxy/pkg/metrics"
@@ -41,7 +40,7 @@ func (p *Prometheus) Exec(next http.Handler) http.Handler {
 		}
 
 		metrics.RequestsTotal.
-			WithLabelValues(p.Route, r.Method, strconv.Itoa(status)).
+			WithLabelValues(p.Route, r.Method, statusBucket(status)).
 			Inc()
 		metrics.RequestDuration.
 			WithLabelValues(p.Route, r.Method).
@@ -50,3 +49,22 @@ func (p *Prometheus) Exec(next http.Handler) http.Handler {
 }
 
 func (p *Prometheus) Close() error { return nil }
+
+// statusBucket collapses HTTP status codes into "1xx".."5xx" so that the
+// Prometheus label cardinality stays bounded regardless of upstream behaviour.
+func statusBucket(code int) string {
+	switch {
+	case code >= 500:
+		return "5xx"
+	case code >= 400:
+		return "4xx"
+	case code >= 300:
+		return "3xx"
+	case code >= 200:
+		return "2xx"
+	case code >= 100:
+		return "1xx"
+	default:
+		return "unknown"
+	}
+}

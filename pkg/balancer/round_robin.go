@@ -1,42 +1,42 @@
 package balancer
 
-import "net/http"
-
-// RoundRobinBalancer is a balancer that selects a host in a round-robin fashion.
-type RoundRobinBalancer struct {
-	*BaseBalancer
-	currentHostIndex int
-}
-
-func NewRoundRobinBalancer(hosts map[string]bool) Balancer {
-	return &RoundRobinBalancer{
-		BaseBalancer:     newBaseBalancer(hosts),
-		currentHostIndex: 0,
-	}
-}
-
-func (rr *RoundRobinBalancer) BalanceFor(_ *http.Request) (string, error) {
-	rr.BaseBalancer.Lock()
-	defer rr.BaseBalancer.Unlock()
-
-	n := len(rr.hostList)
-	if n == 0 {
-		return "", ErrNoHost
-	}
-
-	for i := 0; i < n; i++ {
-		host := rr.hostList[rr.currentHostIndex]
-		rr.currentHostIndex = (rr.currentHostIndex + 1) % n
-		if rr.hosts[host] {
-			return host, nil
-		}
-	}
-
-	return "", ErrNoHost
-}
+import (
+	"net/http"
+	"sync/atomic"
+)
 
 func init() {
 	Register(ROUND_ROBIN, func(hosts map[string]bool, _ map[string]int) Balancer {
 		return NewRoundRobinBalancer(hosts)
 	})
+}
+
+// RoundRobinBalancer selects hosts in a round-robin fashion using a lock-free
+// atomic counter. Skips unhealthy hosts.
+type RoundRobinBalancer struct {
+	*BaseBalancer
+	counter atomic.Uint64
+}
+
+func NewRoundRobinBalancer(hosts map[string]bool) Balancer {
+	return &RoundRobinBalancer{
+		BaseBalancer: newBaseBalancer(hosts),
+	}
+}
+
+func (rr *RoundRobinBalancer) BalanceFor(_ *http.Request) (string, error) {
+	n := len(rr.hostList)
+	if n == 0 {
+		return "", ErrNoHost
+	}
+
+	start := int(rr.counter.Add(1)-1) % n
+	for i := range n {
+		idx := (start + i) % n
+		if rr.isHealthy(idx) {
+			return rr.hostList[idx], nil
+		}
+	}
+
+	return "", ErrNoHost
 }

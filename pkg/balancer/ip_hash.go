@@ -7,8 +7,14 @@ import (
 	"strings"
 )
 
+func init() {
+	Register(IP_HASH, func(hosts map[string]bool, _ map[string]int) Balancer {
+		return NewIPHashBalancer(hosts)
+	})
+}
+
 // IPHashBalancer implements session affinity: the same client IP always maps to
-// the same upstream (as long as it is healthy). It implements RequestBalancer.
+// the same upstream (as long as it is healthy). Lock-free.
 type IPHashBalancer struct {
 	*BaseBalancer
 }
@@ -23,9 +29,6 @@ func NewIPHashBalancer(hosts map[string]bool) Balancer {
 // If the selected host is unhealthy the algorithm walks forward through the
 // index until it finds a healthy one.
 func (ih *IPHashBalancer) BalanceFor(r *http.Request) (string, error) {
-	ih.BaseBalancer.Lock()
-	defer ih.BaseBalancer.Unlock()
-
 	n := len(ih.hostList)
 	if n == 0 {
 		return "", ErrNoHost
@@ -36,20 +39,14 @@ func (ih *IPHashBalancer) BalanceFor(r *http.Request) (string, error) {
 	h.Write([]byte(clientIP))
 	startIdx := int(h.Sum32()) % n
 
-	for i := 0; i < n; i++ {
-		host := ih.hostList[(startIdx+i)%n]
-		if ih.hosts[host] {
-			return host, nil
+	for i := range n {
+		idx := (startIdx + i) % n
+		if ih.isHealthy(idx) {
+			return ih.hostList[idx], nil
 		}
 	}
 
 	return "", ErrNoHost
-}
-
-func init() {
-	Register(IP_HASH, func(hosts map[string]bool, _ map[string]int) Balancer {
-		return NewIPHashBalancer(hosts)
-	})
 }
 
 // extractClientIP returns the original client IP from the request, preferring
@@ -59,7 +56,6 @@ func extractClientIP(r *http.Request) string {
 		return strings.TrimSpace(ip)
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the leftmost address (original client)
 		if idx := strings.Index(xff, ","); idx != -1 {
 			return strings.TrimSpace(xff[:idx])
 		}

@@ -3,72 +3,72 @@ package balancer
 import (
 	"math"
 	"net/http"
+	"sync"
 )
 
-type weightedHost struct {
-	weight        int
-	currentWeight int
+func init() {
+	Register(WEIGHTED_ROUND_ROBIN, func(hosts map[string]bool, weights map[string]int) Balancer {
+		return NewWeightedRoundRobinBalancer(hosts, weights)
+	})
 }
 
 // WeightedRoundRobinBalancer implements the Nginx smooth weighted round-robin
-// algorithm. Hosts with higher weights receive proportionally more traffic
-// without clustering bias.
+// algorithm. A small mutex serialises currentWeights mutations; health reads
+// are lock-free via the embedded BaseBalancer.
 type WeightedRoundRobinBalancer struct {
 	*BaseBalancer
-	wHosts map[string]*weightedHost
+	weights        []int
+	currentWeights []int
+	mu             sync.Mutex
 }
 
 func NewWeightedRoundRobinBalancer(hosts map[string]bool, weights map[string]int) Balancer {
 	b := &WeightedRoundRobinBalancer{
-		BaseBalancer: newBaseBalancer(hosts),
-		wHosts:       make(map[string]*weightedHost, len(hosts)),
+		BaseBalancer:   newBaseBalancer(hosts),
+		weights:        make([]int, len(hosts)),
+		currentWeights: make([]int, len(hosts)),
 	}
-	for _, host := range b.hostList {
+	for i, host := range b.hostList {
 		w := 1
 		if weights != nil {
 			if wt, ok := weights[host]; ok && wt > 0 {
 				w = wt
 			}
 		}
-		b.wHosts[host] = &weightedHost{weight: w}
+		b.weights[i] = w
 	}
 	return b
 }
 
 func (w *WeightedRoundRobinBalancer) BalanceFor(_ *http.Request) (string, error) {
-	w.BaseBalancer.Lock()
-	defer w.BaseBalancer.Unlock()
-
-	if len(w.hosts) == 0 {
+	n := len(w.hostList)
+	if n == 0 {
 		return "", ErrNoHost
 	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
 	totalWeight := 0
-	best := ""
+	bestIdx := -1
 	bestWeight := math.MinInt
 
-	for host, wh := range w.wHosts {
-		if !w.hosts[host] {
+	for i := range n {
+		if !w.isHealthy(i) {
 			continue
 		}
-		wh.currentWeight += wh.weight
-		totalWeight += wh.weight
-		if wh.currentWeight > bestWeight {
-			bestWeight = wh.currentWeight
-			best = host
+		w.currentWeights[i] += w.weights[i]
+		totalWeight += w.weights[i]
+		if w.currentWeights[i] > bestWeight {
+			bestWeight = w.currentWeights[i]
+			bestIdx = i
 		}
 	}
 
-	if best == "" {
+	if bestIdx < 0 {
 		return "", ErrNoHost
 	}
 
-	w.wHosts[best].currentWeight -= totalWeight
-	return best, nil
-}
-
-func init() {
-	Register(WEIGHTED_ROUND_ROBIN, func(hosts map[string]bool, weights map[string]int) Balancer {
-		return NewWeightedRoundRobinBalancer(hosts, weights)
-	})
+	w.currentWeights[bestIdx] -= totalWeight
+	return w.hostList[bestIdx], nil
 }

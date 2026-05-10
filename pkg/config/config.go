@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/balancer"
 	"github.com/gabrielopesantos/reverse-proxy/pkg/middleware"
 	"gopkg.in/yaml.v3"
@@ -16,6 +19,10 @@ import (
 
 const (
 	DefaultPath = "examples/config.yaml"
+
+	// fsnotifyDebounce coalesces rapid bursts of write events from editors that
+	// touch the file multiple times during a save.
+	fsnotifyDebounce = 100 * time.Millisecond
 )
 
 type Config struct {
@@ -59,9 +66,7 @@ func (c *Config) Snapshot() map[string]*Route {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	out := make(map[string]*Route, len(c.Routes))
-	for k, v := range c.Routes {
-		out[k] = v
-	}
+	maps.Copy(out, c.Routes)
 	return out
 }
 
@@ -87,55 +92,126 @@ func LoadConfig(ctx context.Context, logger *slog.Logger, configPath string, opt
 	return cfg, nil
 }
 
+// Watch reloads the config when the file changes. fsnotify is used for
+// low-latency change detection; a periodic ticker is run alongside as a
+// safety net for filesystems where notifications can be missed (NFS, some
+// container overlay setups, atomic-rename editors).
 func (c *Config) Watch(ctx context.Context, logger *slog.Logger) error {
+	watcher, watcherErr := fsnotify.NewWatcher()
+	if watcherErr != nil {
+		logger.Warn("fsnotify unavailable, falling back to polling only", "err", watcherErr)
+	} else {
+		defer watcher.Close()
+		// Watch the parent directory: most editors atomically rename a temp
+		// file over the target, which delivers as a Create on the directory
+		// rather than a Write on the original inode.
+		if err := watcher.Add(filepath.Dir(c.configPath)); err != nil {
+			logger.Warn("fsnotify add dir failed, polling only", "err", err)
+			watcher.Close()
+			watcher = nil
+		}
+	}
+
 	ticker := time.NewTicker(c.watchInterval)
 	defer ticker.Stop()
+
+	target := filepath.Clean(c.configPath)
 	var lastHash [32]byte
+	debounce := time.NewTimer(time.Hour)
+	debounce.Stop()
+	pending := false
+
+	tryReload := func() {
+		data, err := os.ReadFile(c.configPath)
+		if err != nil {
+			logger.Warn("could not read config file", "err", err)
+			return
+		}
+		hash := sha256.Sum256(data)
+		if hash == lastHash {
+			return
+		}
+		if err := readConfigFile(ctx, logger, c); err != nil {
+			logger.Warn("could not parse updated config file", "err", err)
+			return
+		}
+		lastHash = hash
+
+		c.mu.RLock()
+		callbacks := make([]func(), len(c.reloadCallbacks))
+		copy(callbacks, c.reloadCallbacks)
+		c.mu.RUnlock()
+		for _, fn := range callbacks {
+			fn()
+		}
+	}
+
+	var watcherEvents <-chan fsnotify.Event
+	var watcherErrors <-chan error
+	if watcher != nil {
+		watcherEvents = watcher.Events
+		watcherErrors = watcher.Errors
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			data, err := os.ReadFile(c.configPath)
-			if err != nil {
-				logger.Warn("could not read config file", "err", err)
+			tryReload()
+		case <-debounce.C:
+			pending = false
+			tryReload()
+		case ev, ok := <-watcherEvents:
+			if !ok {
+				watcherEvents = nil
 				continue
 			}
-			hash := sha256.Sum256(data)
-			if hash == lastHash {
+			if filepath.Clean(ev.Name) != target {
 				continue
 			}
-			if err := readConfigFile(ctx, logger, c); err != nil {
-				logger.Warn("could not parse updated config file", "err", err)
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
 				continue
 			}
-			lastHash = hash
-			c.mu.RLock()
-			callbacks := make([]func(), len(c.reloadCallbacks))
-			copy(callbacks, c.reloadCallbacks)
-			c.mu.RUnlock()
-			for _, fn := range callbacks {
-				fn()
+			if !pending {
+				pending = true
+				debounce.Reset(fsnotifyDebounce)
 			}
+		case err, ok := <-watcherErrors:
+			if !ok {
+				watcherErrors = nil
+				continue
+			}
+			logger.Warn("fsnotify error", "err", err)
 		}
 	}
 }
 
+// readConfigFile reads and parses the config file, builds middleware (which
+// may spawn long-lived goroutines), and only then takes the write lock to
+// swap the routes map. Holding the lock across YAML parsing or middleware
+// initialisation would block all in-flight Snapshot() calls for the full
+// duration of the parse.
 func readConfigFile(ctx context.Context, logger *slog.Logger, config *Config) error {
-	config.mu.Lock()
-	defer config.mu.Unlock()
-
-	configFile, err := os.ReadFile(config.configPath)
+	data, err := os.ReadFile(config.configPath)
 	if err != nil {
 		return err
 	}
 
-	if err = yaml.Unmarshal(configFile, config); err != nil {
+	parsed := &Config{}
+	if err := yaml.Unmarshal(data, parsed); err != nil {
 		return err
 	}
 
 	ctx = middleware.ContextWithLogger(ctx, logger)
-	return parseRoutesMiddleware(ctx, config)
+	if err := parseRoutesMiddleware(ctx, parsed); err != nil {
+		return err
+	}
+
+	config.mu.Lock()
+	config.Routes = parsed.Routes
+	config.mu.Unlock()
+	return nil
 }
 
 func parseRoutesMiddleware(ctx context.Context, config *Config) error {

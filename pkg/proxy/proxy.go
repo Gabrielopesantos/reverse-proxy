@@ -28,6 +28,32 @@ var healthCheckClient = &http.Client{
 	Transport: &http.Transport{DisableKeepAlives: true},
 }
 
+// proxyTransport is shared across all upstream reverse proxies. http.Transport
+// pools connections per host:port internally, so a single shared instance
+// gives correct isolation while letting us tune limits once.
+//
+// DisableCompression: a reverse proxy should pass bytes through untouched;
+// transparent gzip would force decode-and-reencode and break Content-Length.
+var proxyTransport http.RoundTripper = func() http.RoundTripper {
+	t := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          1024,
+		MaxIdleConnsPerHost:   256,
+		MaxConnsPerHost:       0, // unlimited
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ForceAttemptHTTP2:     true,
+		DisableCompression:    true,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	}
+	return t
+}()
+
 type Proxy struct {
 	// Hosts maps upstream URLs to httputil.ReverseProxy instances.
 	hosts map[string]*httputil.ReverseProxy
@@ -61,7 +87,7 @@ func buildUpstreams(upstreams []string) (map[string]*httputil.ReverseProxy, map[
 		}
 		target := upstreamURL // capture for closure
 		reverseProxy := httputil.NewSingleHostReverseProxy(target)
-		reverseProxy.Director = nil // NewSingleHostReverseProxy sets Director; clear it so Rewrite is the sole handler
+		reverseProxy.Transport = proxyTransport
 		reverseProxy.Rewrite = func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
 			injectForwardedHeaders(req)
@@ -201,11 +227,9 @@ func injectForwardedHeaders(proxyReq *httputil.ProxyRequest) {
 		clientIP = proxyReq.In.RemoteAddr
 	}
 
-	if prior := proxyReq.In.Header.Get("X-Forwarded-For"); prior != "" {
-		proxyReq.In.Header.Set("X-Forwarded-For", prior+", "+clientIP)
-	} else {
-		proxyReq.In.Header.Set("X-Forwarded-For", clientIP)
-	}
+	// Append rather than concat: net/http joins multi-value headers with ", "
+	// on the wire, saving a per-request string allocation.
+	proxyReq.In.Header["X-Forwarded-For"] = append(proxyReq.In.Header["X-Forwarded-For"], clientIP)
 
 	if proxyReq.In.Header.Get("X-Real-IP") == "" {
 		proxyReq.In.Header.Set("X-Real-IP", clientIP)

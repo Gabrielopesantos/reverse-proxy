@@ -10,16 +10,20 @@ import (
 )
 
 const (
+	DefaultListenAddr = ":8080"
+	DefaultAdminAddr  = ":9090"
+
 	DefaultWatchInterval = 5 * time.Second
-	DefaultListenAddr    = ":8080"
 	DefaultReadTimeout   = 10 * time.Second
-	DefaultLogFormat     = "text"
-	DefaultLogOutput     = "stdout"
-	DefaultLogColor      = "auto"
+
+	DefaultLogFormat = "text"
+	DefaultLogOutput = "stdout"
+	DefaultLogColor  = "auto"
 
 	EnvConfigPath     = "RP_CONFIG_PATH"
 	EnvReloadInterval = "RP_CONFIG_RELOAD_INTERVAL"
 	EnvListenAddr     = "RP_LISTEN_ADDR"
+	EnvAdminAddr      = "RP_ADMIN_ADDR"
 	EnvReadTimeout    = "RP_READ_TIMEOUT"
 	EnvLogLevel       = "RP_LOG_LEVEL"
 	EnvLogFormat      = "RP_LOG_FORMAT"
@@ -33,6 +37,7 @@ type BootstrapConfig struct {
 	ConfigPath     string
 	ReloadInterval time.Duration
 	ListenAddr     string
+	AdminAddr      string // separate listener for /healthz and /metrics; "" disables
 	ReadTimeout    time.Duration
 	LogLevel       slog.Level
 	LogFormat      string // "text" | "json"
@@ -47,6 +52,7 @@ func DefaultBootstrapConfig() BootstrapConfig {
 		ConfigPath:     DefaultPath,
 		ReloadInterval: DefaultWatchInterval,
 		ListenAddr:     DefaultListenAddr,
+		AdminAddr:      DefaultAdminAddr,
 		ReadTimeout:    DefaultReadTimeout,
 		LogLevel:       slog.LevelInfo,
 		LogFormat:      DefaultLogFormat,
@@ -80,6 +86,10 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	}
 	if v := envGet(env, EnvListenAddr); v != "" {
 		cfg.ListenAddr = v
+	}
+	if v, ok := env[EnvAdminAddr]; ok {
+		// Allow explicit empty value to disable the admin listener.
+		cfg.AdminAddr = strings.TrimSpace(v)
 	}
 	if v := envGet(env, EnvReadTimeout); v != "" {
 		d, err := time.ParseDuration(v)
@@ -116,6 +126,7 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	configPath := fs.String("config-path", cfg.ConfigPath, "Path to runtime YAML config file")
 	reloadInterval := fs.Duration("config-reload-interval", cfg.ReloadInterval, fmt.Sprintf("Config watch/reload interval (e.g. %ds)", DefaultWatchInterval))
 	listenAddr := fs.String("listen-addr", cfg.ListenAddr, "HTTP listen address")
+	adminAddr := fs.String("admin-addr", cfg.AdminAddr, "Admin listener for /healthz and /metrics; empty disables")
 	readTimeout := fs.Duration("read-timeout", cfg.ReadTimeout, fmt.Sprintf("HTTP server read timeout (e.g. %ds)", DefaultReadTimeout))
 	fs.TextVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level: debug|info|warn|error")
 	logFormat := fs.String("log-format", cfg.LogFormat, "Log format: text|json")
@@ -131,6 +142,7 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	cfg.ConfigPath = strings.TrimSpace(*configPath)
 	cfg.ReloadInterval = *reloadInterval
 	cfg.ListenAddr = strings.TrimSpace(*listenAddr)
+	cfg.AdminAddr = strings.TrimSpace(*adminAddr)
 	cfg.ReadTimeout = *readTimeout
 	cfg.LogFormat = strings.ToLower(strings.TrimSpace(*logFormat))
 	cfg.LogOutput = strings.TrimSpace(*logOutput)

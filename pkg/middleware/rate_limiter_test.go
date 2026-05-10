@@ -39,11 +39,11 @@ func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
 	if rl.MaxRequests != DEFAULT_MAX_REQUESTS {
 		t.Fatalf("expected default max requests %d, got %d", DEFAULT_MAX_REQUESTS, rl.MaxRequests)
 	}
-	if rl.WindowSizeSeconds != DEFAULT_WINDOW_SIZE_SECONDS {
-		t.Fatalf("expected default timeframe %d, got %d", DEFAULT_WINDOW_SIZE_SECONDS, rl.WindowSizeSeconds)
+	if rl.WindowSizeSecs != DEFAULT_WINDOW_SIZE_SECONDS {
+		t.Fatalf("expected default timeframe %d, got %d", DEFAULT_WINDOW_SIZE_SECONDS, rl.WindowSizeSecs)
 	}
-	if rl.StaleClientTTLSeconds != DEFAULT_STALE_CLIENT_TTL_SECONDS {
-		t.Fatalf("expected default stale ttl %d, got %d", DEFAULT_STALE_CLIENT_TTL_SECONDS, rl.StaleClientTTLSeconds)
+	if rl.StaleClientTTLSecs != DEFAULT_STALE_CLIENT_TTL_SECONDS {
+		t.Fatalf("expected default stale ttl %d, got %d", DEFAULT_STALE_CLIENT_TTL_SECONDS, rl.StaleClientTTLSecs)
 	}
 	if rl.ProxyHeaderMaxForwards != 5 {
 		t.Fatalf("expected default proxy max forwards 5, got %d", rl.ProxyHeaderMaxForwards)
@@ -52,8 +52,8 @@ func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
 
 func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
 	rl := RateLimiter{
-		MaxRequests:       2,
-		WindowSizeSeconds: 1,
+		MaxRequests:    2,
+		WindowSizeSecs: 1,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -82,8 +82,8 @@ func TestRateLimiter_AllowsUnderLimitThenBlocksAtLimit(t *testing.T) {
 
 func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 	rl := RateLimiter{
-		MaxRequests:       1,
-		WindowSizeSeconds: 1,
+		MaxRequests:    1,
+		WindowSizeSecs: 1,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -114,8 +114,8 @@ func TestRateLimiter_ResetsAfterTimeframe(t *testing.T) {
 
 func TestRateLimiter_PerClientIsolation(t *testing.T) {
 	rl := RateLimiter{
-		MaxRequests:       1,
-		WindowSizeSeconds: 2,
+		MaxRequests:    1,
+		WindowSizeSecs: 2,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -152,8 +152,8 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 	)
 
 	rl := RateLimiter{
-		MaxRequests:       maxReqs,
-		WindowSizeSeconds: 2,
+		MaxRequests:    maxReqs,
+		WindowSizeSecs: 2,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -196,8 +196,8 @@ func TestRateLimiter_ConcurrentBurstDoesNotExceedMax(t *testing.T) {
 
 func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
 	rl := RateLimiter{
-		MaxRequests:       1,
-		WindowSizeSeconds: 2,
+		MaxRequests:    1,
+		WindowSizeSecs: 2,
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())
@@ -227,7 +227,7 @@ func TestRateLimiter_UsesRemoteAddrByDefault(t *testing.T) {
 func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
 	rl := RateLimiter{
 		MaxRequests:       1,
-		WindowSizeSeconds: 2,
+		WindowSizeSecs:    2,
 		TrustProxyHeaders: true,
 	}
 	initRateLimiterForTest(t, &rl)
@@ -257,30 +257,28 @@ func TestRateLimiter_TrustProxyHeadersUsesXForwardedFor(t *testing.T) {
 
 func TestRateLimiter_EvictsStaleClients(t *testing.T) {
 	rl := RateLimiter{
-		MaxRequests:           2,
-		WindowSizeSeconds:     2,
-		StaleClientTTLSeconds: 1,
+		MaxRequests:        2,
+		WindowSizeSecs:     2,
+		StaleClientTTLSecs: 1,
 	}
 	initRateLimiterForTest(t, &rl)
 
 	// Seed two clients.
-	rl.countersLock.Lock()
-	rl.counters["client-old"] = &clientCounter{
+	rl.counters.Store("client-old", &clientCounter{
 		windowStart: time.Now().Add(-10 * time.Second),
 		lastSeen:    time.Now().Add(-10 * time.Second),
-	}
-	rl.counters["client-fresh"] = &clientCounter{
+	})
+	rl.clientCount.Add(1)
+	rl.counters.Store("client-fresh", &clientCounter{
 		windowStart: time.Now(),
 		lastSeen:    time.Now(),
-	}
-	rl.countersLock.Unlock()
+	})
+	rl.clientCount.Add(1)
 
 	rl.evictStaleClients()
 
-	rl.countersLock.RLock()
-	_, oldExists := rl.counters["client-old"]
-	_, freshExists := rl.counters["client-fresh"]
-	rl.countersLock.RUnlock()
+	_, oldExists := rl.counters.Load("client-old")
+	_, freshExists := rl.counters.Load("client-fresh")
 
 	if oldExists {
 		t.Fatalf("expected stale client to be evicted")
@@ -301,8 +299,8 @@ func TestRateLimiter_PrevWindowWeighting(t *testing.T) {
 	)
 
 	rl := RateLimiter{
-		MaxRequests:       maxReqs,
-		WindowSizeSeconds: uint(window / time.Second),
+		MaxRequests:    maxReqs,
+		WindowSizeSecs: uint(window / time.Second),
 	}
 	initRateLimiterForTest(t, &rl)
 	h := rl.Exec(okHandler())

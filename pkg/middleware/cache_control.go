@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	utils "github.com/gabrielopesantos/reverse-proxy/pkg/utilities/cache"
@@ -18,14 +19,34 @@ func init() {
 	RegisterYAML(CACHE_CONTROL, func() *CacheControl { return &CacheControl{} })
 }
 
+// defaultMaxCacheBodyBytes caps the per-response buffer when MaxBodyBytes is
+// not configured. 1 MiB keeps a single oversize response from anchoring tens
+// of MB of heap waiting for eviction.
+const defaultMaxCacheBodyBytes = 1 << 20
+
 type CacheControl struct {
 	Duration     string `yaml:"duration"`
 	durationTime time.Duration
 
-	MaxItems uint `yaml:"max_items"`
+	MaxItems     uint `yaml:"max_items"`
+	MaxBodyBytes int  `yaml:"max_body_bytes,omitempty"`
 
 	cache  *utils.SizeLimitedCache
 	logger *slog.Logger
+}
+
+// bufferPool recycles capture buffers so cache-eligible responses don't
+// allocate a fresh bytes.Buffer per request.
+var bufferPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// keyBufPool recycles []byte slices used to assemble the pre-hash cache key.
+var keyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 256)
+		return &b
+	},
 }
 
 func (cc *CacheControl) Init(ctx context.Context) error {
@@ -42,12 +63,15 @@ func (cc *CacheControl) Init(ctx context.Context) error {
 	}
 	cc.cache = utils.NewSizeLimitedCache(maxItems)
 
+	if cc.MaxBodyBytes <= 0 {
+		cc.MaxBodyBytes = defaultMaxCacheBodyBytes
+	}
+
 	return nil
 }
 
 func (cc *CacheControl) Exec(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only cache GET/HEAD responses.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			next.ServeHTTP(w, r)
 			return
@@ -55,7 +79,6 @@ func (cc *CacheControl) Exec(next http.Handler) http.Handler {
 
 		reqCC := parseRequestCacheControl(r.Header.Get("Cache-Control"))
 
-		// no-store: never read or write cache.
 		if reqCC.noStore {
 			next.ServeHTTP(w, r)
 			return
@@ -63,7 +86,6 @@ func (cc *CacheControl) Exec(next http.Handler) http.Handler {
 
 		cacheKey := buildCacheKey(r)
 
-		// no-cache: bypass cache read but still store the fresh response.
 		if !reqCC.noCache {
 			if cached := cc.cache.GetResponse(cacheKey); cached != nil {
 				writeCachedResponse(w, cached)
@@ -71,13 +93,20 @@ func (cc *CacheControl) Exec(next http.Handler) http.Handler {
 			}
 		}
 
-		// Capture the upstream response.
-		crw := newCaptureResponseWriter(w)
+		buf := bufferPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		crw := &captureResponseWriter{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           buf,
+			max:            cc.MaxBodyBytes,
+		}
 		next.ServeHTTP(crw, r)
 
-		// Respect upstream Cache-Control: no-store.
 		respCC := parseResponseCacheControl(crw.Header().Get("Cache-Control"))
-		if respCC.noStore {
+		if respCC.noStore || crw.overflow {
+			// Buffer is unusable for caching; recycle and skip.
+			bufferPool.Put(buf)
 			return
 		}
 
@@ -86,10 +115,15 @@ func (cc *CacheControl) Exec(next http.Handler) http.Handler {
 			ttl = time.Duration(respCC.maxAge) * time.Second
 		}
 
+		// Snapshot the body into a right-sized slice so we can return the
+		// pooled buffer immediately. Cached entries outlive this call.
+		body := append([]byte(nil), crw.body.Bytes()...)
+		bufferPool.Put(buf)
+
 		cc.cache.CacheResponse(cacheKey, &utils.CachedResponse{
 			StatusCode: crw.statusCode,
 			Headers:    map[string][]string(crw.Header().Clone()),
-			Body:       crw.body.Bytes(),
+			Body:       body,
 			ExpiresAt:  time.Now().Add(ttl),
 		})
 	})
@@ -108,15 +142,16 @@ func writeCachedResponse(w http.ResponseWriter, cached *utils.CachedResponse) {
 	_, _ = w.Write(cached.Body)
 }
 
-// captureResponseWriter buffers the response so it can be cached.
+// captureResponseWriter buffers the response body up to max bytes so it can
+// be cached. Once the limit is exceeded, buffering stops, the overflow flag
+// is set, and the entry is skipped at the end of the chain. Bytes still
+// stream through to the client unchanged.
 type captureResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
-	body       bytes.Buffer
-}
-
-func newCaptureResponseWriter(w http.ResponseWriter) *captureResponseWriter {
-	return &captureResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+	body       *bytes.Buffer
+	max        int
+	overflow   bool
 }
 
 func (c *captureResponseWriter) WriteHeader(code int) {
@@ -125,9 +160,20 @@ func (c *captureResponseWriter) WriteHeader(code int) {
 }
 
 func (c *captureResponseWriter) Write(b []byte) (int, error) {
-	c.body.Write(b)
+	if !c.overflow {
+		if c.body.Len()+len(b) > c.max {
+			c.overflow = true
+			c.body.Reset()
+		} else {
+			c.body.Write(b)
+		}
+	}
 	return c.ResponseWriter.Write(b)
 }
+
+// Unwrap exposes the underlying ResponseWriter so http.ResponseController can
+// reach Hijacker/Flusher/Pusher implementations on the original writer.
+func (c *captureResponseWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
 
 type cacheControlDirectives struct {
 	noCache bool
@@ -162,6 +208,17 @@ func parseCacheControlHeader(header string) cacheControlDirectives {
 }
 
 func buildCacheKey(r *http.Request) [16]byte {
-	key := fmt.Appendf(nil, "%s-%s-%s?%s", r.Host, r.Method, r.URL.Path, r.URL.RawQuery)
-	return md5.Sum(key)
+	bp := keyBufPool.Get().(*[]byte)
+	buf := (*bp)[:0]
+	buf = append(buf, r.Host...)
+	buf = append(buf, '-')
+	buf = append(buf, r.Method...)
+	buf = append(buf, '-')
+	buf = append(buf, r.URL.Path...)
+	buf = append(buf, '?')
+	buf = append(buf, r.URL.RawQuery...)
+	sum := md5.Sum(buf)
+	*bp = buf[:0]
+	keyBufPool.Put(bp)
+	return sum
 }

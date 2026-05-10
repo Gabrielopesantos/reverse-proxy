@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -26,6 +27,8 @@ func (a *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type Server struct {
 	server           http.Server
+	adminServer      http.Server
+	adminAddr        string
 	config           *config.Config
 	logger           *slog.Logger
 	handler          *muxHandler
@@ -34,6 +37,10 @@ type Server struct {
 	proxiesMu        sync.Mutex
 	tlsCert          string
 	tlsKey           string
+
+	// lastReloadErr stores the most recent reload failure (or nil) so the
+	// admin /healthz endpoint can report a stale-config condition.
+	lastReloadErr atomic.Pointer[string]
 }
 
 // Option configures a Server at construction time.
@@ -58,15 +65,20 @@ func WithTLSFiles(cert, key string) Option {
 	}
 }
 
+// WithAdminAddress binds /healthz and /metrics on a separate listener.
+// Empty string disables the admin listener entirely (admin endpoints are
+// not registered on the public mux).
+func WithAdminAddress(addr string) Option {
+	return func(s *Server) { s.adminAddr = addr }
+}
+
 func New(cfg *config.Config, opts ...Option) *Server {
 	s := &Server{
 		config:  cfg,
 		logger:  slog.Default(),
 		handler: &muxHandler{},
 	}
-	s.server = http.Server{
-		Handler: s.handler,
-	}
+	s.server = http.Server{Handler: s.handler}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -82,11 +94,15 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// Re-map routes on every successful config reload.
 	s.config.OnReload(func() {
 		if err := s.applyRoutes(); err != nil {
+			msg := err.Error()
+			s.lastReloadErr.Store(&msg)
 			s.logger.Error("error remapping routes after config reload", "err", err)
+			return
 		}
+		s.lastReloadErr.Store(nil)
 	})
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		s.logger.Info("server listening", "addr", s.server.Addr, "tls", s.tlsCert != "")
 		var err error
@@ -100,6 +116,19 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 	}()
 
+	if s.adminAddr != "" {
+		s.adminServer = http.Server{
+			Addr:    s.adminAddr,
+			Handler: s.buildAdminMux(),
+		}
+		go func() {
+			s.logger.Info("admin listening", "addr", s.adminAddr)
+			if err := s.adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				errCh <- err
+			}
+		}()
+	}
+
 	select {
 	case err := <-errCh:
 		s.logger.Error("error starting server", "err", err)
@@ -110,25 +139,43 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := s.server.Shutdown(shutdownCtx)
-	if err == nil {
+	mainErr := s.server.Shutdown(shutdownCtx)
+	var adminErr error
+	if s.adminAddr != "" {
+		adminErr = s.adminServer.Shutdown(shutdownCtx)
+	}
+	if mainErr == nil && adminErr == nil {
 		s.logger.Info("server gracefully exited")
 	}
-	return err
+	return errors.Join(mainErr, adminErr)
+}
+
+// buildAdminMux registers /healthz and /metrics on a dedicated mux so the
+// public listener is not exposing operational endpoints.
+func (s *Server) buildAdminMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.healthzHandler)
+	mux.Handle("/metrics", promhttp.Handler())
+	return mux
+}
+
+func (s *Server) healthzHandler(w http.ResponseWriter, _ *http.Request) {
+	if msg := s.lastReloadErr.Load(); msg != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("stale config: "))
+		_, _ = w.Write([]byte(*msg))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *Server) applyRoutes() error {
 	router := http.NewServeMux()
 
-	// Health and metrics endpoints.
-	router.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	router.Handle("/metrics", promhttp.Handler())
-
-	// Snapshot routes outside any lock so proxy creation (including concurrent
-	// health probes) does not block the config watcher from writing a new config.
+	// Snapshot routes outside any lock so proxy creation does not
+	// block the config watcher from writing a new config.
 	routes := s.config.Snapshot()
 
 	var proxies []*proxy.Proxy
@@ -167,7 +214,8 @@ func (s *Server) applyRoutes() error {
 	s.activeMiddleware = allMiddleware
 	s.proxiesMu.Unlock()
 
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(
+		context.Background(), 30*time.Second)
 	defer drainCancel()
 	for _, p := range oldProxies {
 		p.Stop()

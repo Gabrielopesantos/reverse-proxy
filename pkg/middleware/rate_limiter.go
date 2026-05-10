@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,19 +19,25 @@ const (
 	DEFAULT_MAX_REQUESTS             = 100
 	DEFAULT_WINDOW_SIZE_SECONDS      = 20
 	DEFAULT_STALE_CLIENT_TTL_SECONDS = 300
+	DEFAULT_MAX_CLIENTS              = 100_000
 )
 
 type RateLimiter struct {
-	MaxRequests           uint `yaml:"max_requests"`
-	WindowSizeSeconds     uint `yaml:"window_size_seconds"`
-	StaleClientTTLSeconds uint `yaml:"stale_client_ttl_seconds,omitempty"`
+	MaxRequests        uint `yaml:"max_requests"`
+	WindowSizeSecs     uint `yaml:"window_size_seconds"`
+	StaleClientTTLSecs uint `yaml:"stale_client_ttl_seconds,omitempty"`
+	// MaxClients caps the per-client counter map to bound memory under
+	// high-cardinality traffic (e.g. an IP scan). When the cap is reached,
+	// new clients are rejected with 429 until the cleanup tick or in-line
+	// eviction reclaims slots.
+	MaxClients uint `yaml:"max_clients,omitempty"`
 
 	// TrustProxyHeaders enables trusting the X-Forwarded-For header from the proxy.
 	TrustProxyHeaders      bool `yaml:"trust_proxy_headers,omitempty"`
 	ProxyHeaderMaxForwards int  `yaml:"proxy_header_max_forwards,omitempty"`
 
-	counters     map[string]*clientCounter
-	countersLock sync.RWMutex
+	counters    sync.Map     // map[string]*clientCounter
+	clientCount atomic.Int64 // approximates len(counters); avoids ranging the sync.Map on the hot path
 
 	logger *slog.Logger
 
@@ -38,11 +45,9 @@ type RateLimiter struct {
 	cleanupOnce sync.Once
 }
 
-// clientCounter implements a sliding window counter we
-// track per client the request count of the previous and
-// current fixed-size windows, and approximate the rolling
-// count by weighting the previous window by how far we are
-// into the current one.
+// clientCounter implements a sliding-window counter: we track the previous
+// and current fixed-size window counts and approximate the rolling count by
+// weighting the previous window by how far we are into the current one.
 type clientCounter struct {
 	windowStart time.Time
 	prev        uint
@@ -107,17 +112,18 @@ func (rl *RateLimiter) Init(ctx context.Context) error {
 	if rl.MaxRequests == 0 {
 		rl.MaxRequests = DEFAULT_MAX_REQUESTS
 	}
-	if rl.WindowSizeSeconds == 0 {
-		rl.WindowSizeSeconds = DEFAULT_WINDOW_SIZE_SECONDS
+	if rl.WindowSizeSecs == 0 {
+		rl.WindowSizeSecs = DEFAULT_WINDOW_SIZE_SECONDS
 	}
-	if rl.StaleClientTTLSeconds == 0 {
-		rl.StaleClientTTLSeconds = DEFAULT_STALE_CLIENT_TTL_SECONDS
+	if rl.StaleClientTTLSecs == 0 {
+		rl.StaleClientTTLSecs = DEFAULT_STALE_CLIENT_TTL_SECONDS
 	}
 	if rl.ProxyHeaderMaxForwards <= 0 {
 		rl.ProxyHeaderMaxForwards = 5
 	}
-
-	rl.counters = make(map[string]*clientCounter)
+	if rl.MaxClients == 0 {
+		rl.MaxClients = DEFAULT_MAX_CLIENTS
+	}
 
 	rl.stopCleanup = make(chan struct{})
 	go rl.cleanupLoop()
@@ -130,8 +136,13 @@ func (rl *RateLimiter) Exec(next http.Handler) http.Handler {
 		now := time.Now()
 		clientAddr := rl.clientIP(r)
 
-		window := time.Duration(rl.WindowSizeSeconds) * time.Second
-		counter := rl.getOrCreateClientCounter(clientAddr, now)
+		window := time.Duration(rl.WindowSizeSecs) * time.Second
+		counter, ok := rl.getOrCreateClientCounter(clientAddr, now)
+		if !ok {
+			// Map is at capacity. Treat as overloaded.
+			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+			return
+		}
 
 		allowed, estimated := counter.allow(now, window, rl.MaxRequests)
 		rl.logger.Debug("request", "client_addr", clientAddr, "allowed", allowed, "estimated", estimated)
@@ -145,7 +156,7 @@ func (rl *RateLimiter) Exec(next http.Handler) http.Handler {
 }
 
 func (rl *RateLimiter) cleanupLoop() {
-	ticker := time.NewTicker(time.Duration(rl.StaleClientTTLSeconds) * time.Second)
+	ticker := time.NewTicker(time.Duration(rl.StaleClientTTLSecs) * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -169,36 +180,34 @@ func (rl *RateLimiter) Close() error {
 
 func (rl *RateLimiter) evictStaleClients() {
 	now := time.Now()
-	ttl := time.Duration(rl.StaleClientTTLSeconds) * time.Second
+	ttl := time.Duration(rl.StaleClientTTLSecs) * time.Second
 
-	rl.countersLock.Lock()
-	defer rl.countersLock.Unlock()
-
-	for client, counter := range rl.counters {
-		if counter.isStale(now, ttl) {
-			delete(rl.counters, client)
+	rl.counters.Range(func(k, v any) bool {
+		c := v.(*clientCounter)
+		if c.isStale(now, ttl) {
+			if rl.counters.CompareAndDelete(k, c) {
+				rl.clientCount.Add(-1)
+			}
 		}
-	}
+		return true
+	})
 }
 
-func (rl *RateLimiter) getOrCreateClientCounter(clientAddr string, now time.Time) *clientCounter {
-	rl.countersLock.RLock()
-	c, exists := rl.counters[clientAddr]
-	rl.countersLock.RUnlock()
-	if exists {
-		return c
+func (rl *RateLimiter) getOrCreateClientCounter(clientAddr string, now time.Time) (*clientCounter, bool) {
+	if v, ok := rl.counters.Load(clientAddr); ok {
+		return v.(*clientCounter), true
 	}
 
-	rl.countersLock.Lock()
-	defer rl.countersLock.Unlock()
-
-	if c, exists = rl.counters[clientAddr]; exists {
-		return c
+	if rl.clientCount.Load() >= int64(rl.MaxClients) {
+		return nil, false
 	}
 
-	c = newClientCounter(now)
-	rl.counters[clientAddr] = c
-	return c
+	candidate := newClientCounter(now)
+	actual, loaded := rl.counters.LoadOrStore(clientAddr, candidate)
+	if !loaded {
+		rl.clientCount.Add(1)
+	}
+	return actual.(*clientCounter), true
 }
 
 func (rl *RateLimiter) clientIP(r *http.Request) string {

@@ -6,65 +6,60 @@ import (
 	"sync/atomic"
 )
 
+func init() {
+	Register(LEAST_CONNECTIONS, func(hosts map[string]bool, _ map[string]int) Balancer {
+		return NewLeastConnectionsBalancer(hosts)
+	})
+}
+
 // LeastConnectionsBalancer routes each request to the healthy upstream with
-// the fewest active connections. It implements Releaser so proxy.ServeHTTP can
-// decrement the counter when the upstream response finishes.
+// the fewest active connections. Selection is lock-free: per-host counters
+// are atomic and the host list is immutable after construction.
 type LeastConnectionsBalancer struct {
 	*BaseBalancer
-	conns map[string]*atomic.Int64
+	conns []atomic.Int64
 }
 
 func NewLeastConnectionsBalancer(hosts map[string]bool) Balancer {
 	b := &LeastConnectionsBalancer{
 		BaseBalancer: newBaseBalancer(hosts),
-		conns:        make(map[string]*atomic.Int64, len(hosts)),
-	}
-	for _, host := range b.hostList {
-		b.conns[host] = &atomic.Int64{}
+		conns:        make([]atomic.Int64, len(hosts)),
 	}
 	return b
 }
 
 func (lc *LeastConnectionsBalancer) BalanceFor(_ *http.Request) (string, error) {
-	lc.BaseBalancer.Lock()
-	defer lc.BaseBalancer.Unlock()
-
-	if len(lc.hostList) == 0 {
+	n := len(lc.hostList)
+	if n == 0 {
 		return "", ErrNoHost
 	}
 
-	best := ""
+	bestIdx := -1
 	bestConns := int64(math.MaxInt64)
 
-	for _, host := range lc.hostList {
-		if !lc.hosts[host] {
+	for i := range n {
+		if !lc.isHealthy(i) {
 			continue
 		}
-		c := lc.conns[host].Load()
+		c := lc.conns[i].Load()
 		if c < bestConns {
 			bestConns = c
-			best = host
+			bestIdx = i
 		}
 	}
 
-	if best == "" {
+	if bestIdx < 0 {
 		return "", ErrNoHost
 	}
 
-	lc.conns[best].Add(1)
-	return best, nil
+	lc.conns[bestIdx].Add(1)
+	return lc.hostList[bestIdx], nil
 }
 
 // Release decrements the active-connection counter for host.
-// It is safe to call concurrently without holding the balancer lock.
+// Safe to call concurrently.
 func (lc *LeastConnectionsBalancer) Release(host string) {
-	if c, ok := lc.conns[host]; ok {
-		c.Add(-1)
+	if i, ok := lc.hostIdx[host]; ok {
+		lc.conns[i].Add(-1)
 	}
-}
-
-func init() {
-	Register(LEAST_CONNECTIONS, func(hosts map[string]bool, _ map[string]int) Balancer {
-		return NewLeastConnectionsBalancer(hosts)
-	})
 }

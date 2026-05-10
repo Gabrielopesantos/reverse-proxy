@@ -30,15 +30,21 @@ type HeaderRules struct {
 func (h *Headers) Init(_ context.Context) error { return nil }
 
 func (h *Headers) Exec(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Mutate request headers on a clone so the original is not modified.
-		r2 := r.Clone(r.Context())
-		applyHeaderRules(r2.Header, h.Request)
+	hasReqRules := len(h.Request.Set)+len(h.Request.Add)+len(h.Request.Remove) > 0
+	hasRespRules := len(h.Response.Set)+len(h.Response.Add)+len(h.Response.Remove) > 0
 
-		if len(h.Response.Set)+len(h.Response.Add)+len(h.Response.Remove) > 0 {
-			next.ServeHTTP(&headerModifyWriter{ResponseWriter: w, rules: h.Response}, r2)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip Clone (full request + header copy) when there's nothing to mutate.
+		req := r
+		if hasReqRules {
+			req = r.Clone(r.Context())
+			applyHeaderRules(req.Header, h.Request)
+		}
+
+		if hasRespRules {
+			next.ServeHTTP(&headerModifyWriter{ResponseWriter: w, rules: h.Response}, req)
 		} else {
-			next.ServeHTTP(w, r2)
+			next.ServeHTTP(w, req)
 		}
 	})
 }

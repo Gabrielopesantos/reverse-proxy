@@ -3,7 +3,7 @@ package balancer
 import (
 	"errors"
 	"net/http"
-	"sync"
+	"sync/atomic"
 )
 
 var (
@@ -39,28 +39,41 @@ type Releaser interface {
 	Release(host string)
 }
 
+// BaseBalancer holds the immutable host set and a lock-free per-host health
+// vector. The host list and host->index map are populated at construction and
+// never mutated, so reads are race-free without synchronisation. Only the
+// per-host health bools are atomic.
 type BaseBalancer struct {
-	sync.Mutex
-	hosts    map[string]bool
 	hostList []string
+	hostIdx  map[string]int
+	healthy  []atomic.Bool
 }
 
 func newBaseBalancer(hosts map[string]bool) *BaseBalancer {
-	hostList := make([]string, 0, len(hosts))
-	for h := range hosts {
-		hostList = append(hostList, h)
+	b := &BaseBalancer{
+		hostList: make([]string, 0, len(hosts)),
+		hostIdx:  make(map[string]int, len(hosts)),
+		healthy:  make([]atomic.Bool, len(hosts)),
 	}
-	return &BaseBalancer{
-		hosts:    hosts,
-		hostList: hostList,
+	for h, ok := range hosts {
+		i := len(b.hostList)
+		b.hostList = append(b.hostList, h)
+		b.hostIdx[h] = i
+		b.healthy[i].Store(ok)
+	}
+	return b
+}
+
+// SetHealthStatus is safe to call concurrently with BalanceFor on any
+// embedding balancer.
+func (b *BaseBalancer) SetHealthStatus(host string, isHealthy bool) {
+	if i, ok := b.hostIdx[host]; ok {
+		b.healthy[i].Store(isHealthy)
 	}
 }
 
-func (b *BaseBalancer) SetHealthStatus(host string, isHealthy bool) {
-	b.Lock()
-	defer b.Unlock()
-
-	b.hosts[host] = isHealthy
+func (b *BaseBalancer) isHealthy(i int) bool {
+	return b.healthy[i].Load()
 }
 
 // New constructs a Balancer for the given strategy using the registered factory.
