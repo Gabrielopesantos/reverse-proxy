@@ -1,5 +1,7 @@
 package balancer
 
+import "net/http"
+
 // RoundRobinBalancer is a balancer that selects a host in a round-robin fashion.
 type RoundRobinBalancer struct {
 	*BaseBalancer
@@ -13,7 +15,7 @@ func NewRoundRobinBalancer(hosts map[string]bool) Balancer {
 	}
 }
 
-func (rr *RoundRobinBalancer) Balance() (string, error) {
+func (rr *RoundRobinBalancer) BalanceFor(_ *http.Request) (string, error) {
 	rr.BaseBalancer.Lock()
 	defer rr.BaseBalancer.Unlock()
 
@@ -31,4 +33,10 @@ func (rr *RoundRobinBalancer) Balance() (string, error) {
 	}
 
 	return "", ErrNoHost
+}
+
+func init() {
+	Register(ROUND_ROBIN, func(hosts map[string]bool, _ map[string]int) Balancer {
+		return NewRoundRobinBalancer(hosts)
+	})
 }

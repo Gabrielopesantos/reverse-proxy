@@ -1,6 +1,9 @@
 package balancer
 
-import "math"
+import (
+	"math"
+	"net/http"
+)
 
 type weightedHost struct {
 	weight        int
@@ -32,7 +35,7 @@ func NewWeightedRoundRobinBalancer(hosts map[string]bool, weights map[string]int
 	return b
 }
 
-func (w *WeightedRoundRobinBalancer) Balance() (string, error) {
+func (w *WeightedRoundRobinBalancer) BalanceFor(_ *http.Request) (string, error) {
 	w.BaseBalancer.Lock()
 	defer w.BaseBalancer.Unlock()
 
@@ -62,4 +65,10 @@ func (w *WeightedRoundRobinBalancer) Balance() (string, error) {
 
 	w.wHosts[best].currentWeight -= totalWeight
 	return best, nil
+}
+
+func init() {
+	Register(WEIGHTED_ROUND_ROBIN, func(hosts map[string]bool, weights map[string]int) Balancer {
+		return NewWeightedRoundRobinBalancer(hosts, weights)
+	})
 }

@@ -167,8 +167,11 @@ func (s *Server) applyRoutes() error {
 	s.activeMiddleware = allMiddleware
 	s.proxiesMu.Unlock()
 
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer drainCancel()
 	for _, p := range oldProxies {
 		p.Stop()
+		p.Drain(drainCtx)
 	}
 	for _, mw := range oldMiddleware {
 		if err := mw.Close(); err != nil {

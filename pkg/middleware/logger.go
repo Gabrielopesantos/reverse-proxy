@@ -13,7 +13,7 @@ type StreamType string
 
 const (
 	StreamTypeStdout StreamType = "stdout"
-	StreamTypeStderr            = "stderr"
+	StreamTypeStderr StreamType = "stderr"
 	// If none of the above, has to be a file path
 )
 
@@ -21,7 +21,7 @@ type LoggerMode string
 
 const (
 	LoggerModeJSON LoggerMode = "json"
-	LoggerModeText            = "text"
+	LoggerModeText LoggerMode = "text"
 )
 
 type LoggerConfig struct {

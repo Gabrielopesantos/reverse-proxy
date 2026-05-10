@@ -39,9 +39,10 @@ type Proxy struct {
 	hcInterval time.Duration
 	hcPath     string
 
-	logger *slog.Logger
-	ctx    context.Context
-	cancel context.CancelFunc
+	logger   *slog.Logger
+	ctx      context.Context
+	cancel   context.CancelFunc
+	inflight sync.WaitGroup
 }
 
 // buildUpstreams parses each upstream URL, creates an httputil.ReverseProxy
@@ -123,12 +124,30 @@ func New(upstreams []string, opts ...Option) (*Proxy, error) {
 	return p, nil
 }
 
+// Stop cancels the health-check goroutines. Call Drain to wait for in-flight
+// requests to finish before discarding the proxy.
 func (p *Proxy) Stop() {
 	p.cancel()
 }
 
+// Drain blocks until all in-flight requests complete or ctx is cancelled.
+func (p *Proxy) Drain(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		p.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host, err := balancer.Pick(p.lb, r)
+	p.inflight.Add(1)
+	defer p.inflight.Done()
+
+	host, err := p.lb.BalanceFor(r)
 	if err != nil {
 		p.logger.Error("no healthy upstream available", "path", r.URL.Path, "err", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)

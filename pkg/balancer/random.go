@@ -1,6 +1,9 @@
 package balancer
 
-import "math/rand"
+import (
+	"math/rand"
+	"net/http"
+)
 
 // RandomBalancer is a balancer that selects a host randomly.
 type RandomBalancer struct {
@@ -13,7 +16,7 @@ func NewRandomBalancer(hosts map[string]bool) Balancer {
 	}
 }
 
-func (r *RandomBalancer) Balance() (string, error) {
+func (r *RandomBalancer) BalanceFor(_ *http.Request) (string, error) {
 	r.BaseBalancer.Lock()
 	defer r.BaseBalancer.Unlock()
 
@@ -31,4 +34,10 @@ func (r *RandomBalancer) Balance() (string, error) {
 	}
 
 	return "", ErrNoHost
+}
+
+func init() {
+	Register(RANDOM, func(hosts map[string]bool, _ map[string]int) Balancer {
+		return NewRandomBalancer(hosts)
+	})
 }

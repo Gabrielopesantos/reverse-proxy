@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"math"
+	"net/http"
 	"sync/atomic"
 )
 
@@ -24,7 +25,7 @@ func NewLeastConnectionsBalancer(hosts map[string]bool) Balancer {
 	return b
 }
 
-func (lc *LeastConnectionsBalancer) Balance() (string, error) {
+func (lc *LeastConnectionsBalancer) BalanceFor(_ *http.Request) (string, error) {
 	lc.BaseBalancer.Lock()
 	defer lc.BaseBalancer.Unlock()
 
@@ -60,4 +61,10 @@ func (lc *LeastConnectionsBalancer) Release(host string) {
 	if c, ok := lc.conns[host]; ok {
 		c.Add(-1)
 	}
+}
+
+func init() {
+	Register(LEAST_CONNECTIONS, func(hosts map[string]bool, _ map[string]int) Balancer {
+		return NewLeastConnectionsBalancer(hosts)
+	})
 }

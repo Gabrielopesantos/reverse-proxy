@@ -2,7 +2,6 @@ package balancer
 
 import (
 	"hash/fnv"
-	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -47,26 +46,10 @@ func (ih *IPHashBalancer) BalanceFor(r *http.Request) (string, error) {
 	return "", ErrNoHost
 }
 
-// Balance is the fallback for callers unaware of RequestBalancer; it picks a
-// random healthy host.
-func (ih *IPHashBalancer) Balance() (string, error) {
-	ih.BaseBalancer.Lock()
-	defer ih.BaseBalancer.Unlock()
-
-	n := len(ih.hostList)
-	if n == 0 {
-		return "", ErrNoHost
-	}
-
-	start := rand.Intn(n)
-	for i := 0; i < n; i++ {
-		host := ih.hostList[(start+i)%n]
-		if ih.hosts[host] {
-			return host, nil
-		}
-	}
-
-	return "", ErrNoHost
+func init() {
+	Register(IP_HASH, func(hosts map[string]bool, _ map[string]int) Balancer {
+		return NewIPHashBalancer(hosts)
+	})
 }
 
 // extractClientIP returns the original client IP from the request, preferring
