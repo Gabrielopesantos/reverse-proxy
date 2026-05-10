@@ -104,9 +104,9 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	fs.SetOutput(os.Stderr)
 
 	configPath := fs.String("config-path", cfg.ConfigPath, "Path to runtime YAML config file")
-	reloadInterval := fs.Duration("config-reload-interval", cfg.ReloadInterval, "Config watch/reload interval (e.g. 5s)")
+	reloadInterval := fs.Duration("config-reload-interval", cfg.ReloadInterval, fmt.Sprintf("Config watch/reload interval (e.g. %ds)", DefaultWatchInterval))
 	listenAddr := fs.String("listen-addr", cfg.ListenAddr, "HTTP listen address")
-	readTimeout := fs.Duration("read-timeout", cfg.ReadTimeout, "HTTP server read timeout (e.g. 10s)")
+	readTimeout := fs.Duration("read-timeout", cfg.ReadTimeout, fmt.Sprintf("HTTP server read timeout (e.g. %ds)", DefaultReadTimeout))
 	fs.TextVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level: debug|info|warn|error")
 	logFormat := fs.String("log-format", cfg.LogFormat, "Log format: text|json")
 	logOutput := fs.String("log-output", cfg.LogOutput, "Log output: stdout|stderr|/path/to/file")
