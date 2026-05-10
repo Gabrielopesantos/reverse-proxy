@@ -15,6 +15,8 @@ const (
 	CACHE_CONTROL MiddlewareType = "cache_control"
 	PROMETHEUS    MiddlewareType = "prometheus"
 	WAF           MiddlewareType = "waf"
+	HEADERS       MiddlewareType = "headers"
+	REWRITE       MiddlewareType = "rewrite"
 )
 
 type Middleware interface {

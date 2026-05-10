@@ -32,6 +32,8 @@ type Server struct {
 	activeProxies    []*proxy.Proxy
 	activeMiddleware []middleware.Middleware
 	proxiesMu        sync.Mutex
+	tlsCert          string
+	tlsKey           string
 }
 
 // Option configures a Server at construction time.
@@ -47,6 +49,13 @@ func WithAddress(addr string) Option {
 
 func WithReadTimeout(timeout time.Duration) Option {
 	return func(s *Server) { s.server.ReadTimeout = timeout }
+}
+
+func WithTLSFiles(cert, key string) Option {
+	return func(s *Server) {
+		s.tlsCert = cert
+		s.tlsKey = key
+	}
 }
 
 func New(cfg *config.Config, opts ...Option) *Server {
@@ -79,8 +88,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		s.logger.Info("server listening", "addr", s.server.Addr)
-		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
+		s.logger.Info("server listening", "addr", s.server.Addr, "tls", s.tlsCert != "")
+		var err error
+		if s.tlsCert != "" {
+			err = s.server.ListenAndServeTLS(s.tlsCert, s.tlsKey)
+		} else {
+			err = s.server.ListenAndServe()
+		}
+		if err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()

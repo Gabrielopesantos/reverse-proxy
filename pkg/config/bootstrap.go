@@ -25,6 +25,8 @@ const (
 	EnvLogFormat      = "RP_LOG_FORMAT"
 	EnvLogOutput      = "RP_LOG_OUTPUT"
 	EnvLogColor       = "RP_LOG_COLOR"
+	EnvTLSCert        = "RP_TLS_CERT"
+	EnvTLSKey         = "RP_TLS_KEY"
 )
 
 type BootstrapConfig struct {
@@ -36,6 +38,8 @@ type BootstrapConfig struct {
 	LogFormat      string // "text" | "json"
 	LogOutput      string // "stdout" | "stderr" | file path
 	LogColor       string // "auto" | "always" | "never"
+	TLSCertFile    string // path to TLS certificate; enables HTTPS when non-empty
+	TLSKeyFile     string // path to TLS private key; must be set together with TLSCertFile
 }
 
 func DefaultBootstrapConfig() BootstrapConfig {
@@ -98,6 +102,12 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	if v := envGet(env, EnvLogColor); v != "" {
 		cfg.LogColor = strings.ToLower(v) // validated below
 	}
+	if v := envGet(env, EnvTLSCert); v != "" {
+		cfg.TLSCertFile = v
+	}
+	if v := envGet(env, EnvTLSKey); v != "" {
+		cfg.TLSKeyFile = v
+	}
 
 	// Args/flags overrides
 	fs := flag.NewFlagSet("reverse-proxy", flag.ContinueOnError)
@@ -111,6 +121,8 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	logFormat := fs.String("log-format", cfg.LogFormat, "Log format: text|json")
 	logOutput := fs.String("log-output", cfg.LogOutput, "Log output: stdout|stderr|/path/to/file")
 	logColor := fs.String("log-color", cfg.LogColor, "Log color mode: auto|always|never")
+	tlsCert := fs.String("tls-cert", cfg.TLSCertFile, "Path to TLS certificate file (enables HTTPS + HTTP/2)")
+	tlsKey := fs.String("tls-key", cfg.TLSKeyFile, "Path to TLS private key file")
 
 	if err := fs.Parse(args); err != nil {
 		return BootstrapConfig{}, err
@@ -123,6 +135,8 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	cfg.LogFormat = strings.ToLower(strings.TrimSpace(*logFormat))
 	cfg.LogOutput = strings.TrimSpace(*logOutput)
 	cfg.LogColor = strings.ToLower(strings.TrimSpace(*logColor))
+	cfg.TLSCertFile = strings.TrimSpace(*tlsCert)
+	cfg.TLSKeyFile = strings.TrimSpace(*tlsKey)
 
 	if err := validateLogFormat(cfg.LogFormat); err != nil {
 		return BootstrapConfig{}, fmt.Errorf("log-format: %w", err)
@@ -145,6 +159,9 @@ func LoadBootstrap(args []string, environ []string) (BootstrapConfig, error) {
 	}
 	if cfg.LogOutput == "" {
 		return BootstrapConfig{}, fmt.Errorf("log-output cannot be empty")
+	}
+	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
+		return BootstrapConfig{}, fmt.Errorf("tls-cert and tls-key must both be set or both be empty")
 	}
 
 	return cfg, nil

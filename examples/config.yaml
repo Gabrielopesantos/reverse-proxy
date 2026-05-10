@@ -61,3 +61,31 @@ routes:
   #     - "http://localhost:8081"
   #     - "http://localhost:8082"
   #   lb_strategy: "ip_hash"
+
+  # headers middleware: manipulate request/response headers
+  # /headers-example:
+  #   upstreams: ["http://localhost:8081"]
+  #   middleware:
+  #     - headers:
+  #         request:
+  #           set:
+  #             X-Internal-Source: reverse-proxy
+  #           remove:
+  #             - X-Forwarded-For   # strip before trusting upstream
+  #         response:
+  #           set:
+  #             X-Frame-Options: DENY
+  #             X-Content-Type-Options: nosniff
+  #           remove:
+  #             - Server            # hide upstream identity
+
+  # rewrite middleware: rewrite request path before forwarding (first match wins)
+  # /rewrite-example:
+  #   upstreams: ["http://localhost:8081"]
+  #   middleware:
+  #     - rewrite:
+  #         rules:
+  #           - match: "^/api/v1/(.*)"
+  #             replace: "/v1/$1"
+  #           - match: "^/legacy/(.*)"
+  #             replace: "/$1"

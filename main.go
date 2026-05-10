@@ -46,18 +46,22 @@ func main() {
 		}
 	}()
 
-	srv := server.New(
-		runtimeConfig,
+	srvOpts := []server.Option{
 		server.WithLogger(logger),
 		server.WithAddress(boostrapCfg.ListenAddr),
 		server.WithReadTimeout(boostrapCfg.ReadTimeout),
-	)
+	}
+	if boostrapCfg.TLSCertFile != "" {
+		srvOpts = append(srvOpts, server.WithTLSFiles(boostrapCfg.TLSCertFile, boostrapCfg.TLSKeyFile))
+	}
+	srv := server.New(runtimeConfig, srvOpts...)
 
 	logger.Info(
 		"starting reverse-proxy",
 		"config_path", boostrapCfg.ConfigPath,
 		"reload_interval", boostrapCfg.ReloadInterval.String(),
 		"listen_addr", boostrapCfg.ListenAddr,
+		"tls", boostrapCfg.TLSCertFile != "",
 		"log_level", boostrapCfg.LogLevel,
 		"log_format", boostrapCfg.LogFormat,
 		"log_output", boostrapCfg.LogOutput,
