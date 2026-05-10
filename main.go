@@ -12,13 +12,13 @@ import (
 )
 
 func main() {
-	boostrapCfg, err := config.LoadBootstrap(os.Args[1:], os.Environ())
+	bootstrapCfg, err := config.LoadBootstrap(os.Args[1:], os.Environ())
 	if err != nil {
 		slog.Error("could not load bootstrap configuration", "err", err)
 		os.Exit(1)
 	}
 
-	logger, cleanupLogger, err := config.NewBootstrapLogger(boostrapCfg)
+	logger, cleanupLogger, err := config.NewBootstrapLogger(bootstrapCfg)
 	if err != nil {
 		slog.Error("could not initialize logger from bootstrap configuration", "err", err)
 		os.Exit(1)
@@ -28,14 +28,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	runtimeConfig, err := config.LoadConfig(
-		ctx,
-		logger,
-		boostrapCfg.ConfigPath,
-		config.WithWatchInterval(boostrapCfg.ReloadInterval),
-	)
+	runtimeConfig, err := config.LoadConfig(ctx, bootstrapCfg, logger)
 	if err != nil {
-		logger.Error("could not parse runtime configuration file", "path", boostrapCfg.ConfigPath, "err", err)
+		logger.Error("could not parse runtime configuration file", "path", bootstrapCfg.ConfigPath, "err", err)
 		os.Exit(1)
 	}
 
@@ -48,26 +43,26 @@ func main() {
 
 	srvOpts := []server.Option{
 		server.WithLogger(logger),
-		server.WithAddress(boostrapCfg.ListenAddr),
-		server.WithAdminAddress(boostrapCfg.AdminAddr),
-		server.WithReadTimeout(boostrapCfg.ReadTimeout),
+		server.WithAddress(bootstrapCfg.ListenAddr),
+		server.WithAdminAddress(bootstrapCfg.AdminAddr),
+		server.WithReadTimeout(bootstrapCfg.ReadTimeout),
 	}
-	if boostrapCfg.TLSCertFile != "" {
-		srvOpts = append(srvOpts, server.WithTLSFiles(boostrapCfg.TLSCertFile, boostrapCfg.TLSKeyFile))
+	if bootstrapCfg.TLSCertFile != "" {
+		srvOpts = append(srvOpts, server.WithTLSFiles(bootstrapCfg.TLSCertFile, bootstrapCfg.TLSKeyFile))
 	}
 	srv := server.New(runtimeConfig, srvOpts...)
 
 	logger.Info(
 		"starting reverse-proxy",
-		"config_path", boostrapCfg.ConfigPath,
-		"reload_interval", boostrapCfg.ReloadInterval.String(),
-		"listen_addr", boostrapCfg.ListenAddr,
-		"admin_addr", boostrapCfg.AdminAddr,
-		"tls", boostrapCfg.TLSCertFile != "",
-		"log_level", boostrapCfg.LogLevel,
-		"log_format", boostrapCfg.LogFormat,
-		"log_output", boostrapCfg.LogOutput,
-		"read_timeout", boostrapCfg.ReadTimeout.String(),
+		"config_path", bootstrapCfg.ConfigPath,
+		"reload_interval", bootstrapCfg.ReloadInterval.String(),
+		"listen_addr", bootstrapCfg.ListenAddr,
+		"admin_addr", bootstrapCfg.AdminAddr,
+		"tls", bootstrapCfg.TLSCertFile != "",
+		"log_level", bootstrapCfg.LogLevel,
+		"log_format", bootstrapCfg.LogFormat,
+		"log_output", bootstrapCfg.LogOutput,
+		"read_timeout", bootstrapCfg.ReadTimeout.String(),
 	)
 
 	if err := srv.ListenAndServe(ctx); err != nil {

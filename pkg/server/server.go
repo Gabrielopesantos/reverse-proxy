@@ -15,6 +15,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const (
+	defaultShutdownTimeout   = 5 * time.Second
+	defaultProxyDrainTimeout = 30 * time.Second
+)
+
 // muxHandler wraps an http.ServeMux behind an atomic pointer so the
 // active router can be swapped without downtime during config hot-reload.
 type muxHandler struct {
@@ -86,14 +91,14 @@ func New(cfg *config.Config, opts ...Option) *Server {
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
-	if err := s.applyRoutes(); err != nil {
+	if err := s.applyRoutes(ctx); err != nil {
 		s.logger.Error("error while mapping proxy routes", "err", err)
 		return err
 	}
 
 	// Re-map routes on every successful config reload.
 	s.config.OnReload(func() {
-		if err := s.applyRoutes(); err != nil {
+		if err := s.applyRoutes(ctx); err != nil {
 			msg := err.Error()
 			s.lastReloadErr.Store(&msg)
 			s.logger.Error("error remapping routes after config reload", "err", err)
@@ -136,7 +141,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Parent ctx is already Done here (we just exited <-ctx.Done()); strip
+	// cancellation so the shutdown deadline is the only stop signal.
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultShutdownTimeout)
 	defer cancel()
 
 	mainErr := s.server.Shutdown(shutdownCtx)
@@ -147,6 +154,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if mainErr == nil && adminErr == nil {
 		s.logger.Info("server gracefully exited")
 	}
+
 	return errors.Join(mainErr, adminErr)
 }
 
@@ -171,7 +179,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func (s *Server) applyRoutes() error {
+func (s *Server) applyRoutes(ctx context.Context) error {
 	router := http.NewServeMux()
 
 	// Snapshot routes outside any lock so proxy creation does not
@@ -182,6 +190,7 @@ func (s *Server) applyRoutes() error {
 	var allMiddleware []middleware.Middleware
 	for routePathPattern, routeConfig := range routes {
 		p, err := proxy.New(
+			ctx,
 			routeConfig.Upstreams,
 			proxy.WithLoadBalancerStrategy(routeConfig.LoadBalancerStrategy),
 			proxy.WithWeights(routeConfig.Weights),
@@ -214,8 +223,7 @@ func (s *Server) applyRoutes() error {
 	s.activeMiddleware = allMiddleware
 	s.proxiesMu.Unlock()
 
-	drainCtx, drainCancel := context.WithTimeout(
-		context.Background(), 30*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(ctx, defaultProxyDrainTimeout)
 	defer drainCancel()
 	for _, p := range oldProxies {
 		p.Stop()

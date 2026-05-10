@@ -22,7 +22,11 @@ func init() {
 // defaultMaxCacheBodyBytes caps the per-response buffer when MaxBodyBytes is
 // not configured. 1 MiB keeps a single oversize response from anchoring tens
 // of MB of heap waiting for eviction.
-const defaultMaxCacheBodyBytes = 1 << 20
+const (
+	defaultMaxCacheBodyBytes = 1 << 20
+	defaultMaxCacheItems     = 200
+	cacheKeyBufInitialCap    = 256
+)
 
 type CacheControl struct {
 	Duration     string `yaml:"duration"`
@@ -44,7 +48,7 @@ var bufferPool = sync.Pool{
 // keyBufPool recycles []byte slices used to assemble the pre-hash cache key.
 var keyBufPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, 0, 256)
+		b := make([]byte, 0, cacheKeyBufInitialCap)
 		return &b
 	},
 }
@@ -59,7 +63,7 @@ func (cc *CacheControl) Init(ctx context.Context) error {
 
 	maxItems := cc.MaxItems
 	if maxItems == 0 {
-		maxItems = 200
+		maxItems = defaultMaxCacheItems
 	}
 	cc.cache = utils.NewSizeLimitedCache(maxItems)
 

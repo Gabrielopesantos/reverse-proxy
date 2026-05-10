@@ -16,12 +16,26 @@ import (
 	"github.com/gabrielopesantos/reverse-proxy/pkg/metrics"
 )
 
-const defaultHealthCheckInterval = 5 * time.Second
+const (
+	defaultHealthCheckInterval = 5 * time.Second
+	healthProbeTimeout         = 3 * time.Second
+
+	transportMaxIdleConns          = 1024
+	transportMaxIdleConnsPerHost   = 256
+	transportMaxConnsPerHost       = 0 // unlimited
+	transportIdleConnTimeout       = 90 * time.Second
+	transportTLSHandshakeTimeout   = 5 * time.Second
+	transportExpectContinueTimeout = 1 * time.Second
+	transportResponseHeaderTimeout = 30 * time.Second
+
+	dialerTimeout   = 5 * time.Second
+	dialerKeepAlive = 30 * time.Second
+)
 
 // healthCheckClient is shared across all health probes. DisableKeepAlives
 // ensures each probe opens a fresh connection (no stale pool entries).
 var healthCheckClient = &http.Client{
-	Timeout: 3 * time.Second,
+	Timeout: healthProbeTimeout,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -37,18 +51,18 @@ var healthCheckClient = &http.Client{
 var proxyTransport http.RoundTripper = func() http.RoundTripper {
 	t := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		MaxIdleConns:          1024,
-		MaxIdleConnsPerHost:   256,
-		MaxConnsPerHost:       0, // unlimited
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
+		MaxIdleConns:          transportMaxIdleConns,
+		MaxIdleConnsPerHost:   transportMaxIdleConnsPerHost,
+		MaxConnsPerHost:       transportMaxConnsPerHost,
+		IdleConnTimeout:       transportIdleConnTimeout,
+		TLSHandshakeTimeout:   transportTLSHandshakeTimeout,
+		ExpectContinueTimeout: transportExpectContinueTimeout,
+		ResponseHeaderTimeout: transportResponseHeaderTimeout,
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true,
 		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   dialerTimeout,
+			KeepAlive: dialerKeepAlive,
 		}).DialContext,
 	}
 	return t
@@ -100,7 +114,7 @@ func buildUpstreams(upstreams []string) (map[string]*httputil.ReverseProxy, map[
 	return hostRevProxyMap, hostHealthMap, nil
 }
 
-func New(upstreams []string, opts ...Option) (*Proxy, error) {
+func New(ctx context.Context, upstreams []string, opts ...Option) (*Proxy, error) {
 	o := &options{
 		lbStrategy: balancer.RANDOM,
 		hcInterval: defaultHealthCheckInterval,
@@ -119,10 +133,10 @@ func New(upstreams []string, opts ...Option) (*Proxy, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	pCtx, cancel := context.WithCancel(ctx)
 	p := &Proxy{
 		logger:     o.logger,
-		ctx:        ctx,
+		ctx:        pCtx,
 		cancel:     cancel,
 		hcPath:     o.hcPath,
 		hcInterval: o.hcInterval,

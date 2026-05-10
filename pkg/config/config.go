@@ -18,8 +18,6 @@ import (
 )
 
 const (
-	DefaultPath = "examples/config.yaml"
-
 	// fsnotifyDebounce coalesces rapid bursts of write events from editors that
 	// touch the file multiple times during a save.
 	fsnotifyDebounce = 100 * time.Millisecond
@@ -32,13 +30,6 @@ type Config struct {
 	configPath      string
 	watchInterval   time.Duration
 	reloadCallbacks []func()
-}
-
-// Option configures a Config at construction time.
-type Option func(*Config)
-
-func WithWatchInterval(d time.Duration) Option {
-	return func(c *Config) { c.watchInterval = d }
 }
 
 type Route struct {
@@ -77,13 +68,10 @@ func (c *Config) OnReload(fn func()) {
 	c.reloadCallbacks = append(c.reloadCallbacks, fn)
 }
 
-func LoadConfig(ctx context.Context, logger *slog.Logger, configPath string, opts ...Option) (*Config, error) {
+func LoadConfig(ctx context.Context, bootstrapCfg *BootstrapConfig, logger *slog.Logger) (*Config, error) {
 	cfg := &Config{
-		configPath:    configPath,
-		watchInterval: 5 * time.Second,
-	}
-	for _, opt := range opts {
-		opt(cfg)
+		configPath:    bootstrapCfg.ConfigPath,
+		watchInterval: bootstrapCfg.ReloadInterval,
 	}
 	if err := readConfigFile(ctx, logger, cfg); err != nil {
 		return nil, err

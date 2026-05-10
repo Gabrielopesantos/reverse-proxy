@@ -8,13 +8,15 @@ import (
 	"strings"
 )
 
+const logFileMode = 0o666
+
 // NewBootstrapLogger creates a process-wide logger from bootstrap settings.
 //
 // It returns:
 //   - a configured logger
 //   - a cleanup function (closes file outputs when used; no-op otherwise)
 //   - an error if configuration is invalid or output cannot be opened
-func NewBootstrapLogger(cfg BootstrapConfig) (*slog.Logger, func(), error) {
+func NewBootstrapLogger(cfg *BootstrapConfig) (*slog.Logger, func(), error) {
 	writer, cleanup, err := bootstrapLogWriter(cfg.LogOutput)
 	if err != nil {
 		return nil, func() {}, err
@@ -50,7 +52,7 @@ func bootstrapLogWriter(output string) (io.Writer, func(), error) {
 	case "stderr":
 		return os.Stderr, func() {}, nil
 	default:
-		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o666)
+		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, logFileMode)
 		if err != nil {
 			return nil, func() {}, fmt.Errorf("failed to open log output %q: %w", output, err)
 		}

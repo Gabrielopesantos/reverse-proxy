@@ -16,7 +16,7 @@ func init() {
 	RegisterYAML(BASIC_AUTH, func() *BasicAuth { return &BasicAuth{} })
 }
 
-const BASIC_AUTH_ROW_DELIMITER = "\n"
+const basicAuthRowDelimiter = "\n"
 
 type BasicAuth struct {
 	File string `yaml:"file"`
@@ -32,7 +32,7 @@ func (ba *BasicAuth) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to open file with basic auth credentials: %w", err)
 	}
 
-	ba.encodedAuthRows = strings.Split(string(data), BASIC_AUTH_ROW_DELIMITER)
+	ba.encodedAuthRows = strings.Split(string(data), basicAuthRowDelimiter)
 
 	return nil
 }

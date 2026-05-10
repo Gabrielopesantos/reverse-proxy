@@ -36,14 +36,14 @@ func TestRateLimiter_DefaultsAppliedInInit(t *testing.T) {
 	rl := RateLimiter{}
 	initRateLimiterForTest(t, &rl)
 
-	if rl.MaxRequests != DEFAULT_MAX_REQUESTS {
-		t.Fatalf("expected default max requests %d, got %d", DEFAULT_MAX_REQUESTS, rl.MaxRequests)
+	if rl.MaxRequests != defaultMaxRequests {
+		t.Fatalf("expected default max requests %d, got %d", defaultMaxRequests, rl.MaxRequests)
 	}
-	if rl.WindowSizeSecs != DEFAULT_WINDOW_SIZE_SECONDS {
-		t.Fatalf("expected default timeframe %d, got %d", DEFAULT_WINDOW_SIZE_SECONDS, rl.WindowSizeSecs)
+	if rl.WindowSizeSecs != defaultWindowSizeSeconds {
+		t.Fatalf("expected default timeframe %d, got %d", defaultWindowSizeSeconds, rl.WindowSizeSecs)
 	}
-	if rl.StaleClientTTLSecs != DEFAULT_STALE_CLIENT_TTL_SECONDS {
-		t.Fatalf("expected default stale ttl %d, got %d", DEFAULT_STALE_CLIENT_TTL_SECONDS, rl.StaleClientTTLSecs)
+	if rl.StaleClientTTLSecs != defaultStaleClientTTLSeconds {
+		t.Fatalf("expected default stale ttl %d, got %d", defaultStaleClientTTLSeconds, rl.StaleClientTTLSecs)
 	}
 	if rl.ProxyHeaderMaxForwards != 5 {
 		t.Fatalf("expected default proxy max forwards 5, got %d", rl.ProxyHeaderMaxForwards)

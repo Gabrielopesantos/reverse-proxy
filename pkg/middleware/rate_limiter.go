@@ -16,10 +16,11 @@ func init() {
 }
 
 const (
-	DEFAULT_MAX_REQUESTS             = 100
-	DEFAULT_WINDOW_SIZE_SECONDS      = 20
-	DEFAULT_STALE_CLIENT_TTL_SECONDS = 300
-	DEFAULT_MAX_CLIENTS              = 100_000
+	defaultMaxRequests            = 100
+	defaultWindowSizeSeconds      = 20
+	defaultStaleClientTTLSeconds  = 300
+	defaultMaxClients             = 100_000
+	defaultProxyHeaderMaxForwards = 5
 )
 
 type RateLimiter struct {
@@ -110,19 +111,19 @@ func (rl *RateLimiter) Init(ctx context.Context) error {
 	rl.logger = LoggerFromContext(ctx)
 
 	if rl.MaxRequests == 0 {
-		rl.MaxRequests = DEFAULT_MAX_REQUESTS
+		rl.MaxRequests = defaultMaxRequests
 	}
 	if rl.WindowSizeSecs == 0 {
-		rl.WindowSizeSecs = DEFAULT_WINDOW_SIZE_SECONDS
+		rl.WindowSizeSecs = defaultWindowSizeSeconds
 	}
 	if rl.StaleClientTTLSecs == 0 {
-		rl.StaleClientTTLSecs = DEFAULT_STALE_CLIENT_TTL_SECONDS
+		rl.StaleClientTTLSecs = defaultStaleClientTTLSeconds
 	}
 	if rl.ProxyHeaderMaxForwards <= 0 {
-		rl.ProxyHeaderMaxForwards = 5
+		rl.ProxyHeaderMaxForwards = defaultProxyHeaderMaxForwards
 	}
 	if rl.MaxClients == 0 {
-		rl.MaxClients = DEFAULT_MAX_CLIENTS
+		rl.MaxClients = defaultMaxClients
 	}
 
 	rl.stopCleanup = make(chan struct{})
