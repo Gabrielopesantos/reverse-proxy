@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sync/atomic"
 )
@@ -10,15 +11,50 @@ var (
 	ErrNoHost = errors.New("no healthy upstream host found")
 )
 
-type LoadBalancerStrategy string
+type LoadBalancerStrategy int
 
 const (
-	RANDOM               LoadBalancerStrategy = "random"
-	ROUND_ROBIN          LoadBalancerStrategy = "round_robin"
-	WEIGHTED_ROUND_ROBIN LoadBalancerStrategy = "weighted_round_robin"
-	LEAST_CONNECTIONS    LoadBalancerStrategy = "least_connections"
-	IP_HASH              LoadBalancerStrategy = "ip_hash"
+	Random LoadBalancerStrategy = iota
+	RoundRobin
+	WeightedRoundRobin
+	LeastConnections
+	IPHash
 )
+
+func (lb LoadBalancerStrategy) String() string {
+	switch lb {
+	case Random:
+		return "random"
+	case RoundRobin:
+		return "round_robin"
+	case WeightedRoundRobin:
+		return "weighted_round_robin"
+	case LeastConnections:
+		return "least_connections"
+	case IPHash:
+		return "ip_hash"
+	default:
+		return ""
+	}
+}
+
+func (lb *LoadBalancerStrategy) UnmarshalText(text []byte) error {
+	switch string(text) {
+	case "random":
+		*lb = Random
+	case "round_robin":
+		*lb = RoundRobin
+	case "weighted_round_robin":
+		*lb = WeightedRoundRobin
+	case "least_connections":
+		*lb = LeastConnections
+	case "ip_hash":
+		*lb = IPHash
+	default:
+		return fmt.Errorf("unknown lb_strategy %q", string(text))
+	}
+	return nil
+}
 
 // Balancer selects which target host is going to serve the request.
 // All strategies receive the incoming request; implementations that do not use

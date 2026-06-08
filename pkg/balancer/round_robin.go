@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	Register(ROUND_ROBIN, func(hosts map[string]bool, _ map[string]int) Balancer {
+	Register(RoundRobin, func(hosts map[string]bool, _ map[string]int) Balancer {
 		return NewRoundRobinBalancer(hosts)
 	})
 }

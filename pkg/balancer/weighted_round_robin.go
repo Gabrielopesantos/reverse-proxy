@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	Register(WEIGHTED_ROUND_ROBIN, func(hosts map[string]bool, weights map[string]int) Balancer {
+	Register(WeightedRoundRobin, func(hosts map[string]bool, weights map[string]int) Balancer {
 		return NewWeightedRoundRobinBalancer(hosts, weights)
 	})
 }

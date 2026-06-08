@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(RATE_LIMITER, func() *RateLimiter { return &RateLimiter{} })
+	RegisterYAML(TypeRateLimiter, func() *RateLimiter { return &RateLimiter{} })
 }
 
 const (
@@ -266,3 +266,4 @@ func remoteAddrIP(remoteAddr string) string {
 func clientIP(r *http.Request) string {
 	return remoteAddrIP(r.RemoteAddr)
 }
+

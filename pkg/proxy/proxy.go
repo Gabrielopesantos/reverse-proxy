@@ -116,7 +116,7 @@ func buildUpstreams(upstreams []string) (map[string]*httputil.ReverseProxy, map[
 
 func New(ctx context.Context, upstreams []string, opts ...Option) (*Proxy, error) {
 	o := &options{
-		lbStrategy: balancer.RANDOM,
+		lbStrategy: balancer.Random,
 		hcInterval: defaultHealthCheckInterval,
 		hcPath:     "/",
 		logger:     slog.Default(),

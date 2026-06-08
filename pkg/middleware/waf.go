@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(WAF, func() *WAFMiddleware { return &WAFMiddleware{} })
+	RegisterYAML(TypeWAF, func() *WAFMiddleware { return &WAFMiddleware{} })
 }
 
 const defaultMaxBodyBytes = 65536

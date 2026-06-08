@@ -25,7 +25,7 @@
 
             src = ./.;
 
-            vendorHash = "sha256-mflBD79yQMdLG4aXyUnGWI0oLLWvikG2ffFvBIMtMYo=";
+            vendorHash = "sha256-G7nyZSOwatHDPmXfHzs6HpEnXFR5Zao9JWP3Q5o+3vw=";
 
             meta = {
               description = "A configurable HTTP reverse proxy with middleware support";
@@ -44,6 +44,9 @@
           ];
 
           shellHook = ''
+            unset GOROOT
+            unset GOBIN
+            export GOTOOLCHAIN=local
             echo "reverse-proxy dev shell (Go $(go version | awk '{print $3}'))"
           '';
         };

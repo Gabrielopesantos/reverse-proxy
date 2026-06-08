@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	Register(IP_HASH, func(hosts map[string]bool, _ map[string]int) Balancer {
+	Register(IPHash, func(hosts map[string]bool, _ map[string]int) Balancer {
 		return NewIPHashBalancer(hosts)
 	})
 }

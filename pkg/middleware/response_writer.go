@@ -21,29 +21,29 @@ func NewLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
 	}
 }
 
-func (lrw *loggingResponseWriter) WriteHeader(statusCode int) {
-	lrw.statusCode = statusCode
-	lrw.ResponseWriter.WriteHeader(statusCode)
+func (w *loggingResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
 }
 
 // Unwrap lets http.ResponseController fall through to the underlying writer.
-func (lrw *loggingResponseWriter) Unwrap() http.ResponseWriter { return lrw.ResponseWriter }
+func (w *loggingResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := lrw.ResponseWriter.(http.Hijacker); ok {
+func (w *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
 		return h.Hijack()
 	}
 	return nil, nil, http.ErrNotSupported
 }
 
-func (lrw *loggingResponseWriter) Flush() {
-	if f, ok := lrw.ResponseWriter.(http.Flusher); ok {
+func (w *loggingResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-func (lrw *loggingResponseWriter) Push(target string, opts *http.PushOptions) error {
-	if p, ok := lrw.ResponseWriter.(http.Pusher); ok {
+func (w *loggingResponseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := w.ResponseWriter.(http.Pusher); ok {
 		return p.Push(target, opts)
 	}
 	return http.ErrNotSupported

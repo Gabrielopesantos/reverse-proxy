@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(PROMETHEUS, func() *Prometheus { return &Prometheus{} })
+	RegisterYAML(TypePrometheus, func() *Prometheus { return &Prometheus{} })
 }
 
 // Prometheus is middleware that records per-route request metrics.

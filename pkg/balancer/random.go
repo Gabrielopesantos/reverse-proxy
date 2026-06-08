@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	Register(RANDOM, func(hosts map[string]bool, _ map[string]int) Balancer {
+	Register(Random, func(hosts map[string]bool, _ map[string]int) Balancer {
 		return NewRandomBalancer(hosts)
 	})
 }

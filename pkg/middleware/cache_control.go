@@ -16,7 +16,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(CACHE_CONTROL, func() *CacheControl { return &CacheControl{} })
+	RegisterYAML(TypeCacheControl, func() *CacheControl { return &CacheControl{} })
 }
 
 // defaultMaxCacheBodyBytes caps the per-response buffer when MaxBodyBytes is

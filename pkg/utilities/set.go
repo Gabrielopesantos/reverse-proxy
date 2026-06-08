@@ -21,8 +21,8 @@ func (s *Set[T]) Add(item T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, inserted := s.items[item]
-	if inserted {
+	_, exists := s.items[item]
+	if exists {
 		return
 	}
 

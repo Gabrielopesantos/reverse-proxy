@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(BASIC_AUTH, func() *BasicAuth { return &BasicAuth{} })
+	RegisterYAML(TypeBasicAuth, func() *BasicAuth { return &BasicAuth{} })
 }
 
 const basicAuthRowDelimiter = "\n"

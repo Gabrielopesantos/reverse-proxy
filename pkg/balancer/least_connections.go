@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	Register(LEAST_CONNECTIONS, func(hosts map[string]bool, _ map[string]int) Balancer {
+	Register(LeastConnections, func(hosts map[string]bool, _ map[string]int) Balancer {
 		return NewLeastConnectionsBalancer(hosts)
 	})
 }

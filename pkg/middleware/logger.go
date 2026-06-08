@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(LOGGER, func() *Logger { return &Logger{} })
+	RegisterYAML(TypeLogger, func() *Logger { return &Logger{} })
 }
 
 type StreamType string
@@ -68,7 +68,7 @@ func (l *Logger) Init(ctx context.Context) error {
 		if l.file != nil {
 			_ = l.file.Close()
 		}
-		file, err := os.OpenFile(string(l.Stream), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		file, err := os.OpenFile(string(l.Stream), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 		if err != nil {
 			return err
 		}
