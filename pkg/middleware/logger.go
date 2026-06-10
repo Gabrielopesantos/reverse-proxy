@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(TypeLogger, func() *Logger { return &Logger{} })
+	RegisterYAML(TypeLogger, PhaseObserve, func() *Logger { return &Logger{} })
 }
 
 type StreamType string

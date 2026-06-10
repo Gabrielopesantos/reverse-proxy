@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(TypeHeaders, func() *Headers { return &Headers{} })
+	RegisterYAML(TypeHeaders, PhaseShape, func() *Headers { return &Headers{} })
 }
 
 // Headers manipulates request and/or response headers.

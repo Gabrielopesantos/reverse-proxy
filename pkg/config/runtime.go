@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -42,8 +43,10 @@ type Route struct {
 	// HealthCheckPath is the HTTP path used for upstream health probes.
 	// Defaults to "/" when empty.
 	HealthCheckPath string `yaml:"healthcheck_path"`
-	// MiddlewareInternalRepr is an ordered list of single-key maps: [{type: config}, ...]
-	MiddlewareInternalRepr []map[middleware.MiddlewareType]interface{} `yaml:"middleware"`
+	// MiddlewareConfig is an ordered list of single-key entries [{type: config}, …].
+	// The proxy reorders entries by phase (see middleware.Phase); within a phase
+	// the list order is preserved, and a type may appear more than once.
+	MiddlewareConfig []map[middleware.MiddlewareType]interface{} `yaml:"middleware"`
 
 	middlewareList []middleware.Middleware
 }
@@ -204,22 +207,46 @@ func readConfigFile(ctx context.Context, logger *slog.Logger, config *Config) er
 
 func parseRoutesMiddleware(ctx context.Context, config *Config) error {
 	for _, routeConfig := range config.Routes {
+		// Stable-sort by phase: phase boundaries are fixed, but order within a
+		// phase (and repeated entries of the same type) follows the config list.
+		slices.SortStableFunc(routeConfig.MiddlewareConfig, func(a, b map[middleware.MiddlewareType]interface{}) int {
+			ta, _ := middlewareTypeOf(a)
+			tb, _ := middlewareTypeOf(b)
+			return middleware.PhaseRank(ta) - middleware.PhaseRank(tb)
+		})
+
 		routeConfig.middlewareList = routeConfig.middlewareList[:0]
-		for _, entry := range routeConfig.MiddlewareInternalRepr {
-			for mwType, mwConfig := range entry {
-				mwCtx := middleware.ContextWithMiddlewareType(ctx, string(mwType))
-				enc, err := yaml.Marshal(mwConfig)
-				if err != nil {
-					return fmt.Errorf("failed to marshal middleware config for type %s: %w", mwType, err)
-				}
-				mw, err := middleware.Build(mwType, mwCtx, enc)
-				if err != nil {
-					return fmt.Errorf("failed to initialize middleware %s: %w", mwType, err)
-				}
-				routeConfig.middlewareList = append(routeConfig.middlewareList, mw)
+		for _, entry := range routeConfig.MiddlewareConfig {
+			mwType, err := middlewareTypeOf(entry)
+			if err != nil {
+				return err
 			}
+
+			mwCtx := middleware.ContextWithMiddlewareType(ctx, string(mwType))
+			enc, err := yaml.Marshal(entry[mwType])
+			if err != nil {
+				return fmt.Errorf("failed to marshal middleware config for type %s: %w", mwType, err)
+			}
+			mw, err := middleware.Build(mwType, mwCtx, enc)
+			if err != nil {
+				return fmt.Errorf("failed to initialize middleware %s: %w", mwType, err)
+			}
+			routeConfig.middlewareList = append(routeConfig.middlewareList, mw)
 		}
 	}
 
 	return nil
+}
+
+// middlewareTypeOf returns the single middleware type key of a config entry.
+// Each YAML "- name: {…}" item must be a single-key map; anything else is a
+// malformed config and fails the reload.
+func middlewareTypeOf(entry map[middleware.MiddlewareType]interface{}) (middleware.MiddlewareType, error) {
+	if len(entry) != 1 {
+		return "", fmt.Errorf("middleware entry must have exactly one type, got %d", len(entry))
+	}
+	for t := range entry {
+		return t, nil
+	}
+	return "", nil // unreachable: len checked above
 }

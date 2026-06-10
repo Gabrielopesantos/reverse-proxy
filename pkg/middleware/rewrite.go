@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	RegisterYAML(TypeRewrite, func() *Rewrite { return &Rewrite{} })
+	RegisterYAML(TypeRewrite, PhaseShape, func() *Rewrite { return &Rewrite{} })
 }
 
 // Rewrite rewrites the request path before forwarding to the upstream.

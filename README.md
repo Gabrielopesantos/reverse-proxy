@@ -24,13 +24,23 @@ Simple implementation of a configurable reverse proxy written in Go.
 - `/metrics` Prometheus endpoint
 - Per-route request counter and latency histogram via the `prometheus` middleware
 
-**Middleware** (ordered, per-route)
+**Middleware** (per-route)
 - `logger` - structured request logging
-- `rate_limiter` - sliding-window rate limit by client IP
-- `basic_auth` - bcrypt-hashed credentials loaded from a file
-- `cache_control` - LRU-backed response cache with TTL
 - `prometheus` - per-route Prometheus metrics
+- `rate_limiter` - sliding-window rate limit by client IP
 - `waf` - Web Application Firewall; blocks or logs requests matching built-in attack signatures
+- `basic_auth` - bcrypt-hashed credentials loaded from a file
+- `headers` - request/response header manipulation
+- `rewrite` - request path rewriting (first matching rule wins)
+- `cache_control` - LRU-backed response cache with TTL
+
+Middleware is configured as an **ordered list**. The proxy assigns each type a **phase** and reorders the chain by phase (outermost -> innermost):
+
+```
+observe(logger, prometheus) -> guard(rate_limiter, waf) -> authenticate(basic_auth) -> shape(headers, rewrite) -> cache(cache_control)
+```
+
+Phase boundaries enforce the orderings that matter (observers wrap everything; rejections precede auth; auth precedes the cache; rewrite precedes the cache so the cache key reflects the rewritten path). **Within a phase your list order is preserved and a type may repeat** - For example, you control whether `headers` runs before or after `rewrite`, and you can have several `headers`/`rewrite` blocks. Custom middleware register with a phase and slot into the chain automatically.
 
 **Graceful shutdown**
 - SIGINT/SIGTERM cancels the root context, stopping the config watcher and draining the HTTP server within 5 s
@@ -95,7 +105,7 @@ routes:
       "http://localhost:8082": 1
     healthcheck_interval_seconds: 5 # default: 5
     healthcheck_path: / # optional, defaults to "/"
-    middleware:
+    middleware: # ordered list; the proxy reorders by phase (see above)
       - logger:
           stream: stdout # "stdout" | "stderr" | file path
           mode: text # "text" | "json"

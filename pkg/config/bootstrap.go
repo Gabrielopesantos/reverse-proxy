@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	// TODO: This shouldn't be the default config
 	defaultConfigPath = "examples/config.yaml"
 	defaultListenAddr = ":8080"
 	defaultAdminAddr  = ":9090"

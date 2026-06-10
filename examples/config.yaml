@@ -27,18 +27,22 @@ routes:
           window_size_seconds: 60
       - basic_auth:
           file: ./examples/basic_auth
+      - waf:
+          mode: block # "block" (default) | "log"
+          rules: # omit to enable all; or list a subset:
+            - sql_injection
+            - xss
+            - path_traversal
+            - command_injection
+          max_body_bytes: 65536 # bytes of request body to inspect
       - cache_control:
           duration: 30s
-  #     - waf:
-  #         mode: block # "block" (default) | "log"
-  #         rules: # omit to enable all; or list a subset:
-  #           - sql_injection
-  #           - xss
-  #           - path_traversal
-  #           - command_injection
-  #         max_body_bytes: 65536 # bytes of request body to inspect
-  #       weighted_round_robin example: :8081 gets ~75% of traffic, :8082 gets ~25%
 
+  # Middleware is an ordered list. The proxy reorders entries by phase
+  # (observe -> guard -> authenticate -> shape -> cache); within a phase your
+  # list order is kept and a type may repeat (e.g. multiple headers/rewrite).
+
+  # weighted_round_robin example: :8081 gets ~75% of traffic, :8082 gets ~25%
   # /weighted:
   #   upstreams:
   #     - "http://localhost:8081"
