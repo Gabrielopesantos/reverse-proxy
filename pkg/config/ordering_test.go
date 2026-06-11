@@ -26,9 +26,6 @@ routes:
           rules:
             - match: "^/a/(.*)"
               replace: "/$1"
-      - logger:
-          stream: stdout
-          mode: text
       - headers:
           request:
             set:
@@ -69,12 +66,11 @@ func TestMiddlewareOrderedByPhase(t *testing.T) {
 	mws := route.Middleware()
 	t.Cleanup(func() {
 		for _, mw := range mws {
-			_ = mw.Close() // stop logger/rate_limiter goroutines
+			_ = mw.Close() // stop rate_limiter goroutines
 		}
 	})
 
 	wantTypes := []middleware.MiddlewareType{
-		middleware.TypeLogger,       // observe
 		middleware.TypePrometheus,   // observe
 		middleware.TypeRateLimiter,  // guard
 		middleware.TypeRewrite,      // shape: /a (first in list)
@@ -92,8 +88,8 @@ func TestMiddlewareOrderedByPhase(t *testing.T) {
 	}
 
 	// Intra-phase ordering: the /a rewrite must precede the /b rewrite.
-	first := mws[3].(*middleware.Rewrite)
-	second := mws[5].(*middleware.Rewrite)
+	first := mws[2].(*middleware.Rewrite)
+	second := mws[4].(*middleware.Rewrite)
 	if first.Rules[0].Match != "^/a/(.*)" {
 		t.Errorf("first rewrite match = %q, want ^/a/(.*)", first.Rules[0].Match)
 	}
@@ -104,8 +100,6 @@ func TestMiddlewareOrderedByPhase(t *testing.T) {
 
 func typeOf(mw middleware.Middleware) middleware.MiddlewareType {
 	switch mw.(type) {
-	case *middleware.Logger:
-		return middleware.TypeLogger
 	case *middleware.Prometheus:
 		return middleware.TypePrometheus
 	case *middleware.RateLimiter:

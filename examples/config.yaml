@@ -7,9 +7,6 @@ routes:
     lb_strategy: "round_robin"
     healthcheck_interval_seconds: 5
     middleware:
-      - logger:
-          stream: first-route.log
-          mode: text
       - rate_limiter:
           max_requests: 4
           window_size_seconds: 30
@@ -19,9 +16,6 @@ routes:
     healthcheck_interval_seconds: 10
     healthcheck_path: "/healthz" # omit to default to "/"
     middleware:
-      - logger:
-          stream: stdout
-          mode: text
       - rate_limiter:
           max_requests: 2
           window_size_seconds: 60

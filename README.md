@@ -25,7 +25,6 @@ Simple implementation of a configurable reverse proxy written in Go.
 - Per-route request counter and latency histogram via the `prometheus` middleware
 
 **Middleware** (per-route)
-- `logger` - structured request logging
 - `prometheus` - per-route Prometheus metrics
 - `rate_limiter` - sliding-window rate limit by client IP
 - `waf` - Web Application Firewall; blocks or logs requests matching built-in attack signatures
@@ -37,7 +36,7 @@ Simple implementation of a configurable reverse proxy written in Go.
 Middleware is configured as an **ordered list**. The proxy assigns each type a **phase** and reorders the chain by phase (outermost -> innermost):
 
 ```
-observe(logger, prometheus) -> guard(rate_limiter, waf) -> authenticate(basic_auth) -> shape(headers, rewrite) -> cache(cache_control)
+observe(prometheus) -> guard(rate_limiter, waf) -> authenticate(basic_auth) -> shape(headers, rewrite) -> cache(cache_control)
 ```
 
 Phase boundaries enforce the orderings that matter (observers wrap everything; rejections precede auth; auth precedes the cache; rewrite precedes the cache so the cache key reflects the rewritten path). **Within a phase your list order is preserved and a type may repeat** - For example, you control whether `headers` runs before or after `rewrite`, and you can have several `headers`/`rewrite` blocks. Custom middleware register with a phase and slot into the chain automatically.
@@ -52,23 +51,24 @@ Phase boundaries enforce the orderings that matter (observers wrap everything; r
 This project uses **two configuration lifecycles**:
 
 1. **Bootstrap config (restart required)**  
-   Process wiring and startup behavior. Changes require restarting the process.
+  Process wiring and startup behavior. Changes require restarting the process.
 
 2. **Runtime config (hot-reloadable YAML)**  
-   Routing and middleware behavior loaded from `examples/config.yaml` (or configured path). Changes are applied without restart.
+  Routing and middleware behavior loaded from a configured path. Changes are applied without restart.
 
 ### Restart-required (bootstrap) settings
 
-These should be provided via CLI flags / env vars (recommended) and are **not** part of runtime route YAML:
+These should be provided via CLI flags / env vars and are **not** part of runtime route YAML:
 
-- Runtime config file path (default: `examples/config.yaml`)
+- Runtime config file path (default: `config.yaml`)
 - Runtime config reload interval (default: `5s`)
 - Server listen address (default: `:8080`)
 - Server read timeout (default: `10s`)
-- Global logger level (`debug|info|warn|error`)
-- Global logger format (`text|json`)
-- Global logger output (`stdout|stderr|/path/to/file`)
-- Global logger color (`auto|true|false`)
+- Global logger level (`debug|info|warn|error`, default: `info`)
+- Global logger format (`text|json`, default: `text`)
+- Global logger output (`stdout|stderr|/path/to/file`, default: `stdout`)
+- Access log output (`stdout|stderr|/path/to/file`, default: `stdout`)
+- Access log format (`json` or `combined` for Apache Combined Log Format, default: `json`)
 
 Suggested env vars:
 - `RP_CONFIG_PATH`
@@ -77,7 +77,8 @@ Suggested env vars:
 - `RP_LOG_LEVEL`
 - `RP_LOG_FORMAT`
 - `RP_LOG_OUTPUT`
-- `RP_LOG_COLOR`
+- `RP_ACCESS_LOG_OUTPUT`
+- `RP_ACCESS_LOG_FORMAT`
 
 
 ### Hot-reloadable (runtime YAML) settings
@@ -106,9 +107,6 @@ routes:
     healthcheck_interval_seconds: 5 # default: 5
     healthcheck_path: / # optional, defaults to "/"
     middleware: # ordered list; the proxy reorders by phase (see above)
-      - logger:
-          stream: stdout # "stdout" | "stderr" | file path
-          mode: text # "text" | "json"
       - rate_limiter:
           max_requests: 100
           window_size_seconds: 60
@@ -140,8 +138,6 @@ For a working example see [`examples/config.yaml`](./examples/config.yaml).
 
 | Middleware | Field | Description |
 |------------|-------|-------------|
-| `logger` | `stream` | `stdout`, `stderr`, or a file path |
-| `logger` | `mode` | `text` or `json` |
 | `rate_limiter` | `max_requests` | Maximum requests allowed in the window |
 | `rate_limiter` | `window_size_seconds` | Sliding window size in seconds |
 | `rate_limiter` | `stale_client_ttl_seconds` | Eviction TTL for inactive client buckets |

@@ -9,30 +9,72 @@ import (
 	"time"
 )
 
+// LogFormat is the operational log format.
+type LogFormat string
+
 const (
-	// TODO: This shouldn't be the default config
-	defaultConfigPath = "examples/config.yaml"
+	LogFormatText LogFormat = "text"
+	LogFormatJSON LogFormat = "json"
+)
+
+// AccessLogFormat is the access log format.
+type AccessLogFormat string
+
+const (
+	AccessLogFormatJSON     AccessLogFormat = "json"
+	AccessLogFormatCombined AccessLogFormat = "combined"
+)
+
+// LogOutput is the destination for a log stream. The named constants cover the
+// two special values; any other LogOutput value is treated as a file path.
+type LogOutput string
+
+const (
+	LogOutputStdout LogOutput = "stdout"
+	LogOutputStderr LogOutput = "stderr"
+)
+
+// ParseLogOutput normalises s into a LogOutput at parse time. The named
+// destinations ("stdout", "stderr") are matched case-insensitively; an empty
+// string defaults to stdout. Everything else is treated as a file path and
+// returned as-is (case preserved; the path is validated when the file is opened).
+func ParseLogOutput(s string) LogOutput {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "stdout":
+		return LogOutputStdout
+	case "stderr":
+		return LogOutputStderr
+	default:
+		return LogOutput(strings.TrimSpace(s))
+	}
+}
+
+const (
+	defaultConfigPath = "config.yaml"
 	defaultListenAddr = ":8080"
 	defaultAdminAddr  = ":9090"
 
 	defaultWatchInterval = 5 * time.Second
 	defaultReadTimeout   = 10 * time.Second
 
-	defaultLogFormat = "text"
-	defaultLogOutput = "stdout"
-	defaultLogColor  = "auto"
+	defaultLogFormat = LogFormatText
+	defaultLogOutput = LogOutputStdout
 
-	envConfigPath     = "RP_CONFIG_PATH"
-	envReloadInterval = "RP_CONFIG_RELOAD_INTERVAL"
-	envListenAddr     = "RP_LISTEN_ADDR"
-	envAdminAddr      = "RP_ADMIN_ADDR"
-	envReadTimeout    = "RP_READ_TIMEOUT"
-	envLogLevel       = "RP_LOG_LEVEL"
-	envLogFormat      = "RP_LOG_FORMAT"
-	envLogOutput      = "RP_LOG_OUTPUT"
-	envLogColor       = "RP_LOG_COLOR"
-	envTLSCert        = "RP_TLS_CERT"
-	envTLSKey         = "RP_TLS_KEY"
+	defaultAccessLogOutput = LogOutputStdout
+	defaultAccessLogFormat = AccessLogFormatJSON
+
+	envConfigPath      = "RP_CONFIG_PATH"
+	envReloadInterval  = "RP_CONFIG_RELOAD_INTERVAL"
+	envListenAddr      = "RP_LISTEN_ADDR"
+	envAdminAddr       = "RP_ADMIN_ADDR"
+	envReadTimeout     = "RP_READ_TIMEOUT"
+	envLogLevel        = "RP_LOG_LEVEL"
+	envLogFormat       = "RP_LOG_FORMAT"
+	envLogOutput       = "RP_LOG_OUTPUT"
+	envAccessLogOutput = "RP_ACCESS_LOG_OUTPUT"
+	envAccessLogFormat = "RP_ACCESS_LOG_FORMAT"
+	envTLSCert         = "RP_TLS_CERT"
+	envTLSKey          = "RP_TLS_KEY"
 )
 
 type BootstrapConfig struct {
@@ -45,9 +87,11 @@ type BootstrapConfig struct {
 	ReadTimeout time.Duration
 
 	LogLevel  slog.Level
-	LogFormat string // "text" | "json"
-	LogOutput string // "stdout" | "stderr" | file path
-	LogColor  string // "auto" | "always" | "never"
+	LogFormat LogFormat
+	LogOutput LogOutput // stdout | stderr | file path
+
+	AccessLogOutput LogOutput       // stdout | stderr | file path
+	AccessLogFormat AccessLogFormat // json | combined
 
 	TLSCertFile string // path to TLS certificate; enables HTTPS when non-empty
 	TLSKeyFile  string // path to TLS private key; must be set together with TLSCertFile
@@ -55,15 +99,16 @@ type BootstrapConfig struct {
 
 func DefaultBootstrapConfig() BootstrapConfig {
 	return BootstrapConfig{
-		ConfigPath:     defaultConfigPath,
-		ReloadInterval: defaultWatchInterval,
-		ListenAddr:     defaultListenAddr,
-		AdminAddr:      defaultAdminAddr,
-		ReadTimeout:    defaultReadTimeout,
-		LogLevel:       slog.LevelInfo,
-		LogFormat:      defaultLogFormat,
-		LogOutput:      defaultLogOutput,
-		LogColor:       defaultLogColor,
+		ConfigPath:      defaultConfigPath,
+		ReloadInterval:  defaultWatchInterval,
+		ListenAddr:      defaultListenAddr,
+		AdminAddr:       defaultAdminAddr,
+		ReadTimeout:     defaultReadTimeout,
+		LogLevel:        slog.LevelInfo,
+		LogFormat:       defaultLogFormat,
+		LogOutput:       defaultLogOutput,
+		AccessLogOutput: defaultAccessLogOutput,
+		AccessLogFormat: defaultAccessLogFormat,
 	}
 }
 
@@ -110,13 +155,16 @@ func LoadBootstrap(args []string, environ []string) (*BootstrapConfig, error) {
 		}
 	}
 	if v := envGet(env, envLogFormat); v != "" {
-		cfg.LogFormat = strings.ToLower(v) // validated below
+		cfg.LogFormat = LogFormat(strings.ToLower(v)) // validated below
 	}
 	if v := envGet(env, envLogOutput); v != "" {
-		cfg.LogOutput = v
+		cfg.LogOutput = ParseLogOutput(v)
 	}
-	if v := envGet(env, envLogColor); v != "" {
-		cfg.LogColor = strings.ToLower(v) // validated below
+	if v := envGet(env, envAccessLogOutput); v != "" {
+		cfg.AccessLogOutput = ParseLogOutput(v)
+	}
+	if v := envGet(env, envAccessLogFormat); v != "" {
+		cfg.AccessLogFormat = AccessLogFormat(strings.ToLower(v)) // validated below
 	}
 	if v := envGet(env, envTLSCert); v != "" {
 		cfg.TLSCertFile = v
@@ -135,9 +183,10 @@ func LoadBootstrap(args []string, environ []string) (*BootstrapConfig, error) {
 	adminAddr := fs.String("admin-addr", cfg.AdminAddr, "Admin listener for /healthz and /metrics; empty disables")
 	readTimeout := fs.Duration("read-timeout", cfg.ReadTimeout, fmt.Sprintf("HTTP server read timeout (e.g. %ds)", defaultReadTimeout))
 	fs.TextVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level: debug|info|warn|error")
-	logFormat := fs.String("log-format", cfg.LogFormat, "Log format: text|json")
-	logOutput := fs.String("log-output", cfg.LogOutput, "Log output: stdout|stderr|/path/to/file")
-	logColor := fs.String("log-color", cfg.LogColor, "Log color mode: auto|always|never")
+	logFormat := fs.String("log-format", string(cfg.LogFormat), "Log format: text|json")
+	logOutput := fs.String("log-output", string(cfg.LogOutput), "Log output: stdout|stderr|/path/to/file")
+	accessLogOutput := fs.String("access-log-output", string(cfg.AccessLogOutput), "Access log output: stdout|stderr|/path/to/file")
+	accessLogFormat := fs.String("access-log-format", string(cfg.AccessLogFormat), "Access log format: json|combined")
 	tlsCert := fs.String("tls-cert", cfg.TLSCertFile, "Path to TLS certificate file (enables HTTPS + HTTP/2)")
 	tlsKey := fs.String("tls-key", cfg.TLSKeyFile, "Path to TLS private key file")
 
@@ -150,17 +199,18 @@ func LoadBootstrap(args []string, environ []string) (*BootstrapConfig, error) {
 	cfg.ListenAddr = strings.TrimSpace(*listenAddr)
 	cfg.AdminAddr = strings.TrimSpace(*adminAddr)
 	cfg.ReadTimeout = *readTimeout
-	cfg.LogFormat = strings.ToLower(strings.TrimSpace(*logFormat))
-	cfg.LogOutput = strings.TrimSpace(*logOutput)
-	cfg.LogColor = strings.ToLower(strings.TrimSpace(*logColor))
+	cfg.LogFormat = LogFormat(strings.ToLower(strings.TrimSpace(*logFormat)))
+	cfg.LogOutput = ParseLogOutput(*logOutput)
+	cfg.AccessLogOutput = ParseLogOutput(*accessLogOutput)
+	cfg.AccessLogFormat = AccessLogFormat(strings.ToLower(strings.TrimSpace(*accessLogFormat)))
 	cfg.TLSCertFile = strings.TrimSpace(*tlsCert)
 	cfg.TLSKeyFile = strings.TrimSpace(*tlsKey)
 
 	if err := validateLogFormat(cfg.LogFormat); err != nil {
 		return nil, fmt.Errorf("log-format: %w", err)
 	}
-	if err := validateLogColor(cfg.LogColor); err != nil {
-		return nil, fmt.Errorf("log-color: %w", err)
+	if err := validateAccessLogFormat(cfg.AccessLogFormat); err != nil {
+		return nil, fmt.Errorf("access-log-format: %w", err)
 	}
 
 	if cfg.ConfigPath == "" {
@@ -174,9 +224,6 @@ func LoadBootstrap(args []string, environ []string) (*BootstrapConfig, error) {
 	}
 	if cfg.ReadTimeout <= 0 {
 		return nil, fmt.Errorf("read-timeout must be > 0")
-	}
-	if cfg.LogOutput == "" {
-		return nil, fmt.Errorf("log-output cannot be empty")
 	}
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return nil, fmt.Errorf("tls-cert and tls-key must both be set or both be empty")
@@ -201,20 +248,20 @@ func envGet(env map[string]string, key string) string {
 	return strings.TrimSpace(env[key])
 }
 
-func validateLogFormat(raw string) error {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "text", "json":
+func validateLogFormat(f LogFormat) error {
+	switch f {
+	case LogFormatText, LogFormatJSON:
 		return nil
 	default:
-		return fmt.Errorf("invalid format %q (expected text|json)", raw)
+		return fmt.Errorf("invalid format %q (expected text|json)", f)
 	}
 }
 
-func validateLogColor(raw string) error {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "auto", "always", "never":
+func validateAccessLogFormat(f AccessLogFormat) error {
+	switch f {
+	case AccessLogFormatJSON, AccessLogFormatCombined:
 		return nil
 	default:
-		return fmt.Errorf("invalid color mode %q (expected auto|always|never)", raw)
+		return fmt.Errorf("invalid format %q (expected json|combined)", f)
 	}
 }

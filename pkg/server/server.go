@@ -37,6 +37,7 @@ type Server struct {
 	config           *config.Config
 	logger           *slog.Logger
 	handler          *muxHandler
+	accessLogWrap    func(http.Handler) http.Handler // nil if no access log
 	activeProxies    []*proxy.Proxy
 	activeMiddleware []middleware.Middleware
 	proxiesMu        sync.Mutex
@@ -77,6 +78,13 @@ func WithAdminAddress(addr string) Option {
 	return func(s *Server) { s.adminAddr = addr }
 }
 
+// WithAccessLog wraps every proxied request with access logging.
+// wrap is typically the return value of NewAccessLog; its cleanup is owned by
+// the caller (defer it in main so it flushes after graceful shutdown).
+func WithAccessLog(wrap func(http.Handler) http.Handler) Option {
+	return func(s *Server) { s.accessLogWrap = wrap }
+}
+
 func New(cfg *config.Config, opts ...Option) *Server {
 	s := &Server{
 		config:  cfg,
@@ -94,6 +102,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err := s.applyRoutes(ctx); err != nil {
 		s.logger.Error("error while mapping proxy routes", "err", err)
 		return err
+	}
+
+	if s.accessLogWrap != nil {
+		s.server.Handler = s.accessLogWrap(s.handler)
 	}
 
 	// Re-map routes on every successful config reload.

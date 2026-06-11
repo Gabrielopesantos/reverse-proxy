@@ -9,7 +9,6 @@ import (
 type MiddlewareType string
 
 const (
-	TypeLogger       MiddlewareType = "logger"
 	TypeRateLimiter  MiddlewareType = "rate_limiter"
 	TypeBasicAuth    MiddlewareType = "basic_auth"
 	TypeCacheControl MiddlewareType = "cache_control"

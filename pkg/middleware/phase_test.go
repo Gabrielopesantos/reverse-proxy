@@ -6,7 +6,7 @@ import "testing"
 // representative middleware types.
 func TestPhaseRankOrder(t *testing.T) {
 	order := []MiddlewareType{
-		TypeLogger,       // observe
+		TypePrometheus,   // observe
 		TypeRateLimiter,  // guard
 		TypeBasicAuth,    // authenticate
 		TypeHeaders,      // shape
@@ -24,7 +24,6 @@ func TestPhaseRankOrder(t *testing.T) {
 // config list order (not phase) decides their relative position.
 func TestSamePhaseSharesRank(t *testing.T) {
 	pairs := [][2]MiddlewareType{
-		{TypeLogger, TypePrometheus},
 		{TypeRateLimiter, TypeWAF},
 		{TypeHeaders, TypeRewrite},
 	}

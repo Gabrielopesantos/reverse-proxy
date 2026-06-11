@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,7 +18,7 @@ const logFileMode = 0o666
 //   - a cleanup function (closes file outputs when used; no-op otherwise)
 //   - an error if configuration is invalid or output cannot be opened
 func NewBootstrapLogger(cfg *BootstrapConfig) (*slog.Logger, func(), error) {
-	writer, cleanup, err := bootstrapLogWriter(cfg.LogOutput)
+	writer, cleanup, err := OpenLogWriter(cfg.LogOutput)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -27,15 +28,14 @@ func NewBootstrapLogger(cfg *BootstrapConfig) (*slog.Logger, func(), error) {
 	}
 
 	var handler slog.Handler
-	switch strings.ToLower(strings.TrimSpace(cfg.LogFormat)) {
-	case "text":
-		colorMode := strings.ToLower(strings.TrimSpace(cfg.LogColor))
+	switch cfg.LogFormat {
+	case LogFormatText:
 		w := io.Writer(writer)
-		if resolveColorEnabled(colorMode, writer) {
+		if isTTY(writer) {
 			w = colorizingWriter{writer}
 		}
 		handler = slog.NewTextHandler(w, opts)
-	case "json":
+	case LogFormatJSON:
 		handler = slog.NewJSONHandler(writer, opts)
 	default:
 		cleanup()
@@ -45,37 +45,37 @@ func NewBootstrapLogger(cfg *BootstrapConfig) (*slog.Logger, func(), error) {
 	return slog.New(handler), cleanup, nil
 }
 
-func bootstrapLogWriter(output string) (io.Writer, func(), error) {
-	switch strings.ToLower(strings.TrimSpace(output)) {
-	case "", "stdout":
-		return os.Stdout, func() {}, nil
-	case "stderr":
-		return os.Stderr, func() {}, nil
-	default:
-		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, logFileMode)
-		if err != nil {
-			return nil, func() {}, fmt.Errorf("failed to open log output %q: %w", output, err)
-		}
-		return f, func() { _ = f.Close() }, nil
+func isTTY(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	if !ok {
+		return false
 	}
+	fileInfo, err := file.Stat()
+	return err == nil && (fileInfo.Mode()&os.ModeCharDevice) != 0
 }
 
-func resolveColorEnabled(mode string, w io.Writer) bool {
-	switch mode {
-	case "always":
-		return true
-	case "never":
-		return false
-	case "auto", "":
-		if f, ok := w.(*os.File); ok {
-			fi, err := f.Stat()
-			if err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
-				return true
+// OpenLogWriter resolves a LogOutput to a writer. LogOutputStdout and
+// LogOutputStderr map to the corresponding OS streams; any other value is
+// treated as a file path (parent directory is created automatically).
+// The returned cleanup function closes file outputs; it is a no-op for streams.
+func OpenLogWriter(output LogOutput) (io.Writer, func(), error) {
+	switch output {
+	case LogOutputStdout:
+		return os.Stdout, func() {}, nil
+	case LogOutputStderr:
+		return os.Stderr, func() {}, nil
+	default:
+		path := string(output)
+		if dir := filepath.Dir(path); dir != "." {
+			if err := os.MkdirAll(dir, 0o750); err != nil {
+				return nil, func() {}, fmt.Errorf("failed to create log directory %q: %w", dir, err)
 			}
 		}
-		return false
-	default:
-		return false
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, logFileMode)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("failed to open log output %q: %w", path, err)
+		}
+		return f, func() { _ = f.Close() }, nil
 	}
 }
 

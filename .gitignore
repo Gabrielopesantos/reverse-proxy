@@ -26,3 +26,4 @@ go.work
 # Custom
 first-route.log
 .direnv
+logs/

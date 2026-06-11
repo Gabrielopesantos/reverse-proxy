@@ -25,6 +25,13 @@ func main() {
 	}
 	defer cleanupLogger()
 
+	accessLogWrap, cleanupAccessLog, err := server.NewAccessLog(bootstrapCfg.AccessLogOutput, bootstrapCfg.AccessLogFormat)
+	if err != nil {
+		logger.Error("could not initialize access log", "err", err)
+		os.Exit(1)
+	}
+	defer cleanupAccessLog()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -46,6 +53,7 @@ func main() {
 		server.WithAddress(bootstrapCfg.ListenAddr),
 		server.WithAdminAddress(bootstrapCfg.AdminAddr),
 		server.WithReadTimeout(bootstrapCfg.ReadTimeout),
+		server.WithAccessLog(accessLogWrap),
 	}
 	if bootstrapCfg.TLSCertFile != "" {
 		srvOpts = append(srvOpts, server.WithTLSFiles(bootstrapCfg.TLSCertFile, bootstrapCfg.TLSKeyFile))
@@ -62,6 +70,8 @@ func main() {
 		"log_level", bootstrapCfg.LogLevel,
 		"log_format", bootstrapCfg.LogFormat,
 		"log_output", bootstrapCfg.LogOutput,
+		"access_log_output", bootstrapCfg.AccessLogOutput,
+		"access_log_format", bootstrapCfg.AccessLogFormat,
 		"read_timeout", bootstrapCfg.ReadTimeout.String(),
 	)
 
